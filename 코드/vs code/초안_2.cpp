@@ -23,14 +23,13 @@ unsigned long StartTime = 0;
 unsigned long Horizontal_Move_Time = 0;
 
 //TB6612FNG(기어드 모터_수평이동)
-const int PWMA;
+const int PWMA = 5;
 const int AIN1 = 2;
 const int AIN2 = 3;
 
 const int STBY = 4; 
 
 bool Horizontal_Move_Started = false;
-
 int Horizontal_Speed = 0;
 
 //HM0557(스텝모터)
@@ -192,7 +191,7 @@ void Stop_Horizontal_Move() {
     Horizontal_Speed= Calculate_Speed; 
   } 
   analogWrite(PWMA, Horizontal_Speed);
-  
+
   if (Horizontal_Speed == 0) {
      Turn_Off_Horizontal_Motor();
   }
