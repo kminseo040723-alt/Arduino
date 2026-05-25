@@ -15,7 +15,7 @@ enum RobotState {
 };
   RobotState currentState = Start;
 
-
+  
 //시작 시간 설정
 unsigned long StartTime = 0;
 
@@ -43,6 +43,7 @@ const int Motor_Num = 2;
 Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 
 const int Target_Distance = 800; //80cm
+int distance = 0;
 int failCount = 0;
 const int Max_Fail_Count = 10;
 
@@ -161,7 +162,6 @@ void Close_Gripper (){
 }
 
 void Go_Up() {
-  int distance;
   if (Read_Distance(distance)) {
     failCount = 0;
     if (!Read_MPU(Ax1, Ay1, Az1, Gx1, Gy1, Gz1)) {
@@ -264,6 +264,7 @@ void Stop_Motors() {
     digitalWrite(L_EN[i], LOW);
   }
 }
+
 void Harvest() {
   // digitalWrite(R_EN_1, LOW);
   // digitalWrite(L_EN_1, LOW);
