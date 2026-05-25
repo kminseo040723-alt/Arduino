@@ -40,7 +40,11 @@ const int L_PWM[] = {6,10};
 
 const int Motor_Num = 2;
 
-const int Max_Speed = ;
+const int Intermediary_Speed = 200; //속도 조절을 위한 중간값, 필요에 따라 조정
+const int Start_Speed = 0; //시작 속도, 필요에 따라 조정
+const int Speed_Increment = 5; //속도 증가량, 필요에 따라 조정
+const int Max_Speed = 255; //최대 속도, 필요에 따라 조정
+int currentSpeed[Motor_Num] = {0, 0}; //현재 속도 저장 배열
 
 //VL53L0X
 Adafruit_VL53L0X lox = Adafruit_VL53L0X();
@@ -55,7 +59,6 @@ Adafruit_MPU6050 mpu;
 int16_t Ax1, Ay1, Az1, Gx1, Gy1, Gz1;
 
 void setup() {
-  
   //HM0557(스텝모터)
   pinMode(STR, OUTPUT);
   pinMode(DIR, OUTPUT);
@@ -246,15 +249,25 @@ void Set_Motor (int motor) {
 
   int speed;
 
-  if (motor == 0) {
-    speed = map(800, 0, Target_Distance, 255, 0); //<-----------------------------------speed조절 함수 추가 필수
-    analogWrite(R_PWM[motor], speed);
-    analogWrite(L_PWM[motor], 0);
+  if (currentSpeed[motor] < Intermediary_Speed) {
+    if (currentSpeed[motor] == 0) {
+      currentSpeed[motor] = Start_Speed;
+    } else {
+      currentSpeed[motor] += Speed_Increment; //속도 증가, 필요에 따라 조정
+    }
+  } else if (currentSpeed[motor] >= Intermediary_Speed && currentSpeed[motor] < Max_Speed) {
+    if (motor ==0) {
+      currentSpeed[motor] = map(Ax1, 0, Target_Distance, Intermediary_Speed, Max_Speed);//<-----------------------------------speed조절 함수 추가 필수
+    } else {
+      currentSpeed[motor] = map(Ay1, 0, Target_Distance, Intermediary_Speed, Max_Speed);
+    }
+  } else if (currentSpeed[motor] > Max_Speed) {
+    currentSpeed[motor] = Start_Speed; 
   } else {
-    speed = map(800, 0, Target_Distance, 255, 0);
-    analogWrite(R_PWM[motor], speed);
-    analogWrite(L_PWM[motor], 0);
+    currentSpeed[motor] = Start_Speed; 
   }
+  analogWrite(R_PWM[motor], currentSpeed[motor]);
+  analogWrite(L_PWM[motor], LOW);
 }
 
 
