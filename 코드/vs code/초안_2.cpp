@@ -20,11 +20,18 @@ void changeState(RobotState newState) {
 }
 //시작 시간 설정
 unsigned long StartTime = 0;
+unsigned long Horizontal_Move_Time = 0;
 
 //TB6612FNG(기어드 모터_수평이동)
-// const int PWMA;
-// const int AIN1 = 2;
-// const int AIN2 = 3;
+const int PWMA;
+const int AIN1 = 2;
+const int AIN2 = 3;
+
+const int STBY = 4; 
+
+bool Horizontal_Move_Started = false;
+
+int Horizontal_Speed = 0;
 
 //HM0557(스텝모터)
 const int STR = 8;   // STEP/PULSE
@@ -41,7 +48,7 @@ const int L_PWM[] = {6,10};
 const int Motor_Num = 2;
 
 const int Intermediary_Speed = 200; 
-const int Start_Speed = 5; 
+const int Start_Speed = 50; 
 const int Speed_Increment = 5; 
 const int Max_Speed = 255; 
 int currentSpeed[Motor_Num] = {0, 0}; //현재 속도 저장 배열
@@ -59,6 +66,14 @@ Adafruit_MPU6050 mpu;
 int16_t Ax1, Ay1, Az1, Gx1, Gy1, Gz1;
 
 void setup() {
+  //TB6612FNG(기어드 모터)
+  pinMode(STBY, OUTPUT);
+  pinMode(PWMA, OUTPUT);
+  pinMode(AIN1, OUTPUT);    
+  pinMode(AIN2, OUTPUT);
+  digitalWrite(STBY, HIGH); // Standby 해제
+  analogWrite(PWMA, 0); // 속도 초기화
+
   //HM0557(스텝모터)
   pinMode(STR, OUTPUT);
   pinMode(DIR, OUTPUT);
@@ -107,10 +122,27 @@ void loop() {
     }
     break;
           
-  case Horizontal_Move: //<-------------------------------------------------------------------추가 필요
-    Move_Horizontal();
-    delay(500);
-    changeState(Gripper_Open);
+  case Horizontal_Move: 
+    if (!Horizontal_Move_Started) {
+      Horizontal_Move_Time = millis();
+      Horizontal_Move_Started = true;
+      digitalWrite(AIN1, HIGH);
+      digitalWrite(AIN2, LOW);
+    }
+    unsigned long elapsedTime = millis() - Horizontal_Move_Time;
+    if (elapsedTime <= 3000) {
+      Move_Horizontal();
+    } else if (elapsedTime <= 5000) {
+      Stop_Horizontal_Move();
+    } else  {
+      analogWrite(PWMA, 0); 
+      Turn_Off_Horizontal_Motor();
+      
+      Horizontal_Speed = 0; 
+      Horizontal_Move_Started = false; 
+      changeState(Gripper_Open);
+    }
+    delay(50);
     break;
     
   case Gripper_Open:
@@ -142,6 +174,33 @@ void loop() {
 }
         
 void Move_Horizontal() {
+  if (Horizontal_Speed ==0) {
+    Horizontal_Speed = Start_Speed;
+  } else if (Horizontal_Speed >= Start_Speed && Horizontal_Speed < Intermediary_Speed) {
+    Horizontal_Speed += Speed_Increment; 
+  }  else if (Horizontal_Speed >= Intermediary_Speed) {
+    Horizontal_Speed = Intermediary_Speed;
+  }
+  analogWrite(PWMA, Horizontal_Speed);
+}
+
+void Stop_Horizontal_Move() {
+  int Calculate_Speed = Horizontal_Speed - Speed_Increment;
+  if (Calculate_Speed <= 0) {
+    Horizontal_Speed = 0;
+  }  else {
+    Horizontal_Speed= Calculate_Speed; 
+  } 
+  analogWrite(PWMA, Horizontal_Speed);
+  
+  if (Horizontal_Speed == 0) {
+     Turn_Off_Horizontal_Motor();
+  }
+}
+
+void Turn_Off_Horizontal_Motor() {
+  digitalWrite(AIN1, LOW);
+  digitalWrite(AIN2, LOW);
 }
 
 void Open_Gripper() {
@@ -154,6 +213,7 @@ void Open_Gripper() {
     delayMicroseconds(100);
   }
 }
+
 
 void Close_Gripper (){
   digitalWrite(DIR, LOW);
@@ -262,7 +322,7 @@ void Set_Motor (int motor) {
       currentSpeed[motor] = map(Ay1, 0, Target_Distance, Intermediary_Speed, Max_Speed);
     }
   } else if (currentSpeed[motor] > Max_Speed) {
-    currentSpeed[motor] = Start_Speed; 
+    currentSpeed[motor] = Max_Speed; 
   } else {
     currentSpeed[motor] = Start_Speed; 
   }
