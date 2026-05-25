@@ -144,28 +144,28 @@ void loop() {
     delay(50);
     break;
     
-  case Gripper_Open:
+    case Gripper_Open:
     Open_Gripper();
     delay(500);
     changeState(Gripper_Close);
     break;
     
-  case Gripper_Close:
+    case Gripper_Close:
     Close_Gripper();
     delay(500);
     changeState(Climbing);
     break;
     
-  case Climbing:
-    Go_Up();
-    break;
+    case Climbing:
+  Go_Up();
+  break;
   
   case Harvesting://<-------------------------------------------------------------------추가 필요
-    Harvest();
-    delay(500);
-    changeState(IDLE);
-    break;
-    
+  Harvest();
+  delay(500);
+  changeState(IDLE);
+  break;
+  
   case IDLE:
   Stop_Motors();
   break;
@@ -193,7 +193,7 @@ void Stop_Horizontal_Move() {
   analogWrite(PWMA, Horizontal_Speed);
 
   if (Horizontal_Speed == 0) {
-     Turn_Off_Horizontal_Motor();
+    Turn_Off_Horizontal_Motor();
   }
 }
 
@@ -207,7 +207,7 @@ void Open_Gripper() {
   for(int i=0; i<stepsPerRevolution; i++) {
     digitalWrite(STR, HIGH);
     delayMicroseconds(100);
-
+    
     digitalWrite(STR, LOW);
     delayMicroseconds(100);
   }
@@ -219,7 +219,7 @@ void Close_Gripper (){
   for(int i=0; i< stepsPerRevolution* 12 / 10; i++) {
     digitalWrite(STR, HIGH);
     delayMicroseconds(100);
-
+    
     digitalWrite(STR, LOW);
     delayMicroseconds(100);
   }
@@ -234,13 +234,13 @@ void Go_Up() {
       changeState(IDLE);
       return;
     }
-
+    
     Serial.println(distance);
-
+    
     if (distance >= Target_Distance) {
       Stop_Motors();
       changeState(Harvesting);
-      }else {
+    }else {
       Climb_Up();
     } 
   } else {
@@ -271,12 +271,12 @@ bool Read_MPU(int16_t &Ax1, int16_t &Ay1, int16_t &Az1, int16_t &Gx1, int16_t &G
   
   sensors_event_t accel, gyro, temp;
   mpu.getEvent(&accel, &gyro, &temp);
-
-  Ax1 = accel.acceleration.x * 100;//rad/s^2 -> cm/s^2
+  
+  Ax1 = accel.acceleration.x * 100;///cm*s^2
   Ay1 = accel.acceleration.y * 100;
   Az1 = accel.acceleration.z * 100;
 
-  Gx1 = gyro.gyro.x * 1000;//rad/s -> mrad/s
+  Gx1 = gyro.gyro.x * 1000;//rad/s
   Gy1 = gyro.gyro.y * 1000;
   Gz1 = gyro.gyro.z * 1000;
           
@@ -286,7 +286,7 @@ bool Read_MPU(int16_t &Ax1, int16_t &Ay1, int16_t &Az1, int16_t &Gx1, int16_t &G
   Serial.print(Ay1);
   Serial.print(" Z: ");
   Serial.println(Az1);
-
+  
   Serial.print("Gyro X: ");
   Serial.print(Gx1);
   Serial.print(" Y: ");
@@ -298,15 +298,14 @@ bool Read_MPU(int16_t &Ax1, int16_t &Ay1, int16_t &Az1, int16_t &Gx1, int16_t &G
           
 void Climb_Up() {
   for (int i=0; i<Motor_Num; i++) {
-  Set_Motor (i);
+    Set_Motor (i);
   }
 }
 
 void Set_Motor (int motor) {
+  
   digitalWrite(R_EN[motor], HIGH);
   digitalWrite(L_EN[motor], HIGH);
-
-  int speed;
 
   if (currentSpeed[motor] < Intermediary_Speed) {
     if (currentSpeed[motor] == 0) {
