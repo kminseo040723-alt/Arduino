@@ -15,7 +15,9 @@ enum RobotState {
 };
   RobotState currentState = Start;
 
-  
+void changeState(RobotState newState) {
+  currentState = newState;
+}
 //시작 시간 설정
 unsigned long StartTime = 0;
 
@@ -38,6 +40,7 @@ const int L_PWM[] = {6,10};
 
 const int Motor_Num = 2;
 
+const int Max_Speed = ;
 
 //VL53L0X
 Adafruit_VL53L0X lox = Adafruit_VL53L0X();
@@ -49,7 +52,6 @@ const int Max_Fail_Count = 10;
 
 //MPU6050
 Adafruit_MPU6050 mpu;
-const int MPU_addr = 0x68;
 int16_t Ax1, Ay1, Az1, Gx1, Gy1, Gz1;
 
 void setup() {
@@ -93,31 +95,31 @@ void loop() {
  switch (currentState) {
   case Start:
     StartTime = millis();
-    currentState = Stop_5s;
+    changeState(Stop_5s);
     break;
         
   case Stop_5s:
     if(millis() - StartTime >= 5000) {
-    currentState = Horizontal_Move;
+    changeState(Horizontal_Move);
     }
     break;
           
   case Horizontal_Move: //<-------------------------------------------------------------------추가 필요
     Move_Horizontal();
     delay(500);
-    currentState = Gripper_Open;
+    changeState(Gripper_Open);
     break;
     
   case Gripper_Open:
     Open_Gripper();
     delay(500);
-    currentState = Gripper_Close;
+    changeState(Gripper_Close);
     break;
     
   case Gripper_Close:
     Close_Gripper();
     delay(500);
-    currentState = Climbing;
+    changeState(Climbing);
     break;
     
   case Climbing:
@@ -127,7 +129,7 @@ void loop() {
   case Harvesting://<-------------------------------------------------------------------추가 필요
     Harvest();
     delay(500);
-    currentState = IDLE;
+    changeState(IDLE);
     break;
     
   case IDLE:
@@ -167,7 +169,7 @@ void Go_Up() {
     if (!Read_MPU(Ax1, Ay1, Az1, Gx1, Gy1, Gz1)) {
       Serial.println("Failed to read MPU6050 data");
       Stop_Motors();
-      currentState = IDLE;
+      changeState(IDLE);
       return;
     }
 
@@ -175,7 +177,7 @@ void Go_Up() {
 
     if (distance >= Target_Distance) {
       Stop_Motors();
-      currentState = Harvesting;
+      changeState(Harvesting);
       }else {
       Climb_Up();
     } 
@@ -183,7 +185,7 @@ void Go_Up() {
     Stop_Motors ();
     failCount++;
     if (failCount >= Max_Fail_Count) {
-      currentState = IDLE;
+      changeState(IDLE);
       failCount = 0;
     }
   }
@@ -208,9 +210,9 @@ bool Read_MPU(int16_t &Ax1, int16_t &Ay1, int16_t &Az1, int16_t &Gx1, int16_t &G
   sensors_event_t accel, gyro, temp;
   mpu.getEvent(&accel, &gyro, &temp);
 
-  Ax1 = accel.acceleration.x * 1000;
-  Ay1 = accel.acceleration.y * 1000;
-  Az1 = accel.acceleration.z * 1000;
+  Ax1 = accel.acceleration.x * 100;//rad/s^2 -> cm/s^2
+  Ay1 = accel.acceleration.y * 100;
+  Az1 = accel.acceleration.z * 100;
 
   Gx1 = gyro.gyro.x * 1000;
   Gy1 = gyro.gyro.y * 1000;
