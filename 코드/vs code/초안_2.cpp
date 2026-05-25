@@ -40,10 +40,10 @@ const int L_PWM[] = {6,10};
 
 const int Motor_Num = 2;
 
-const int Intermediary_Speed = 200; //속도 조절을 위한 중간값, 필요에 따라 조정
-const int Start_Speed = 0; //시작 속도, 필요에 따라 조정
-const int Speed_Increment = 5; //속도 증가량, 필요에 따라 조정
-const int Max_Speed = 255; //최대 속도, 필요에 따라 조정
+const int Intermediary_Speed = 200; 
+const int Start_Speed = 5; 
+const int Speed_Increment = 5; 
+const int Max_Speed = 255; 
 int currentSpeed[Motor_Num] = {0, 0}; //현재 속도 저장 배열
 
 //VL53L0X
@@ -217,7 +217,7 @@ bool Read_MPU(int16_t &Ax1, int16_t &Ay1, int16_t &Az1, int16_t &Gx1, int16_t &G
   Ay1 = accel.acceleration.y * 100;
   Az1 = accel.acceleration.z * 100;
 
-  Gx1 = gyro.gyro.x * 1000;
+  Gx1 = gyro.gyro.x * 1000;//rad/s -> mrad/s
   Gy1 = gyro.gyro.y * 1000;
   Gz1 = gyro.gyro.z * 1000;
           
@@ -255,7 +255,7 @@ void Set_Motor (int motor) {
     } else {
       currentSpeed[motor] += Speed_Increment; //속도 증가, 필요에 따라 조정
     }
-  } else if (currentSpeed[motor] >= Intermediary_Speed && currentSpeed[motor] < Max_Speed) {
+  } else if (currentSpeed[motor] >= Intermediary_Speed && currentSpeed[motor] <= Max_Speed) {
     if (motor ==0) {
       currentSpeed[motor] = map(Ax1, 0, Target_Distance, Intermediary_Speed, Max_Speed);//<-----------------------------------speed조절 함수 추가 필수
     } else {
