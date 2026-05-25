@@ -39,7 +39,7 @@ const int DIR = 7;   // 방향
 const int stepsPerRevolution = 9000;
 
 //BTS7960(기어드 모터_수직이동)
-const int R_EN[] = {2,7};   //오른쪽
+const int R_EN[] = {2,7};   //오른쪽 수평 이동 코드와 핀 번호 겹침
 const int L_EN[] = {3,8};   //왼쪽
 const int R_PWM[] = {5,9};  
 const int L_PWM[] = {6,10}; 
