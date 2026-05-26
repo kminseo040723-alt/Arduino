@@ -1,5 +1,5 @@
-const int R_EN_1 = 2;   //오른쪽
-const int L_EN_1 = 3;   //왼쪽
+const int R_EN_1 = 7;   //오른쪽
+const int L_EN_1 = 8;   //왼쪽
 const int R_PWM_1 = 5;  
 const int L_PWM_1 = 6;  
 
@@ -15,6 +15,6 @@ void setup() {
 }
 void loop() {
   analogWrite(R_PWM_1, 0);
-  analogWrite(L_PWM_1, 50);
+  analogWrite(L_PWM_1, 150);
   delay(1000);
 }
