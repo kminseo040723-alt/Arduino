@@ -1,6 +1,5 @@
 #include <Adafruit_VL53L0X.h>
 #include <Wire.h>
-#include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 
 enum RobotState {
@@ -44,6 +43,9 @@ const int L_EN[] = {3,8};   //왼쪽
 const int R_PWM[] = {5,9};  
 const int L_PWM[] = {6,10}; 
 
+bool Go_Up_Started = false;
+unsigned long Go_Up_Time = 0;
+
 const int Motor_Num = 2;
 
 const int Intermediary_Speed = 200; 
@@ -51,18 +53,6 @@ const int Start_Speed = 50;
 const int Speed_Increment = 5; 
 const int Max_Speed = 255; 
 int currentSpeed[Motor_Num] = {0, 0}; //현재 속도 저장 배열
-
-//VL53L0X
-Adafruit_VL53L0X lox = Adafruit_VL53L0X();
-
-const int Target_Distance = 800; //80cm
-int distance = 0;
-int failCount = 0;
-const int Max_Fail_Count = 10;
-
-//MPU6050
-Adafruit_MPU6050 mpu;
-int16_t Ax1, Ay1, Az1, Gx1, Gy1, Gz1;
 
 void setup() {
   //TB6612FNG(기어드 모터)
@@ -87,25 +77,6 @@ void setup() {
     digitalWrite(R_EN[i], LOW);
     digitalWrite(L_EN[i], LOW);
     }
-
-  //VL53L0X
-  Serial.begin(115200);
-  Wire.begin();
-    
-  if (!lox.begin()) {
-   Serial.println("VL53L0X not found");
-   while(1);
-  }
-  //MPU6050
-  if (!mpu.begin()) {
-    Serial.println("Failed to find MPU6050 chip");
-    while (1) {
-      delay(10);
-    }
-  }
-  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
-  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 }
     
 void loop() {
@@ -226,75 +197,20 @@ void Close_Gripper (){
 }
 
 void Go_Up() {
-  if (Read_Distance(distance)) {
-    failCount = 0;
-    if (!Read_MPU(Ax1, Ay1, Az1, Gx1, Gy1, Gz1)) {
-      Serial.println("Failed to read MPU6050 data");
-      Stop_Motors();
-      changeState(IDLE);
-      return;
-    }
-    
-    Serial.println(distance);
-    
-    if (distance >= Target_Distance) {
-      Stop_Motors();
-      changeState(Harvesting);
-    }else {
+  if (!Go_Up_Started) {
+    Go_Up_Time = millis();
+    Go_Up_Started = true;
+  }
+  if (millis() - Go_Up_Time <= 50000) {
       Climb_Up();
-    } 
   } else {
-    Stop_Motors ();
-    failCount++;
-    if (failCount >= Max_Fail_Count) {
-      changeState(IDLE);
-      failCount = 0;
-    }
+    Stop_Motors();
+    Go_Up_Started = false;
+    changeState(Harvesting);
   }
   delay(50);
 } 
 
-bool Read_Distance(int &distance) {
-  VL53L0X_RangingMeasurementData_t measure;
-  lox.rangingTest(&measure, false);
-  
-  if (measure.RangeStatus !=4) {
-    distance = measure.RangeMilliMeter;
-    return true;
-  } else {
-    Serial.println("Sensor error");
-    return false;
-  }
-}
-
-bool Read_MPU(int16_t &Ax1, int16_t &Ay1, int16_t &Az1, int16_t &Gx1, int16_t &Gy1, int16_t &Gz1) {  
-  
-  sensors_event_t accel, gyro, temp;
-  mpu.getEvent(&accel, &gyro, &temp);
-  
-  Ax1 = accel.acceleration.x * 100;///cm*s^2
-  Ay1 = accel.acceleration.y * 100;
-  Az1 = accel.acceleration.z * 100;
-
-  Gx1 = gyro.gyro.x * 1000;//rad/s
-  Gy1 = gyro.gyro.y * 1000;
-  Gz1 = gyro.gyro.z * 1000;
-          
-  Serial.print("Accel X: ");
-  Serial.print(Ax1);
-  Serial.print(" Y: ");
-  Serial.print(Ay1);
-  Serial.print(" Z: ");
-  Serial.println(Az1);
-  
-  Serial.print("Gyro X: ");
-  Serial.print(Gx1);
-  Serial.print(" Y: ");
-  Serial.print(Gy1);
-  Serial.print(" Z: ");
-  Serial.println(Gz1);
-  return true;
-}
           
 void Climb_Up() {
   for (int i=0; i<Motor_Num; i++) {
@@ -313,14 +229,8 @@ void Set_Motor (int motor) {
     } else {
       currentSpeed[motor] += Speed_Increment; //속도 증가, 필요에 따라 조정
     }
-  } else if (currentSpeed[motor] >= Intermediary_Speed && currentSpeed[motor] <= Max_Speed) {
-    if (motor ==0) {
-      currentSpeed[motor] = map(Ax1, 0, Target_Distance, Intermediary_Speed, Max_Speed);//<-----------------------------------speed조절 함수 추가 필수
-    } else {
-      currentSpeed[motor] = map(Ay1, 0, Target_Distance, Intermediary_Speed, Max_Speed);
-    }
-  } else if (currentSpeed[motor] > Max_Speed) {
-    currentSpeed[motor] = Max_Speed; 
+  } else if (currentSpeed[motor] >= Intermediary_Speed) {
+    currentSpeed[motor] = Intermediary_Speed; 
   } else {
     currentSpeed[motor] = Start_Speed; 
   }
@@ -335,21 +245,11 @@ void Stop_Motors() {
     analogWrite(L_PWM[i], 0);
     digitalWrite(R_EN[i], LOW);
     digitalWrite(L_EN[i], LOW);
+    currentSpeed[i] = 0;
   }
 }
 
 void Harvest() {
-  // digitalWrite(R_EN_1, LOW);
-  // digitalWrite(L_EN_1, LOW);
-  // analogWrite(R_PWM_1, 0);
-  // analogWrite(L_PWM_1, 0);
-  
-  // for(int i=0; i< 0.8*stepsPerRevolution; i++) {
-  //   digitalWrite(STR, HIGH);
-  //   delayMicroseconds(100); 
-
-  //   digitalWrite(STR, LOW);
-  //   delayMicroseconds(100);
-  // }
+  //수확 동작 구현
 }
 
