@@ -16,10 +16,21 @@ enum RobotState {
 
 void changeState(RobotState newState) {
   currentState = newState;
-}
+
 //시작 시간 설정
 unsigned long StartTime = 0;
 unsigned long Horizontal_Move_Time = 0;
+unsigned long Go_Up_Time = 0;
+
+//bool 설정
+bool Horizontal_Move_Started = false;
+bool Gripper_Open_Started = false;
+bool Go_Up_Started = false;
+
+//초기 속도 설정
+int Horizontal_Speed = 0;
+int gripperStep = 0;
+int currentSpeed[Motor_Num] = {0, 0}; //현재 속도 저장 배열
 
 //TB6612FNG(기어드 모터_수평이동)
 const int PWMA = 5;
@@ -28,8 +39,6 @@ const int AIN2 = 3;
 
 const int STBY = 4; 
 
-bool Horizontal_Move_Started = false;
-int Horizontal_Speed = 0;
 
 //HM0557(스텝모터)
 const int STR = 8;   // STEP/PULSE
@@ -43,8 +52,6 @@ const int L_EN[] = {3,8};   //왼쪽
 const int R_PWM[] = {5,9};  
 const int L_PWM[] = {6,10}; 
 
-bool Go_Up_Started = false;
-unsigned long Go_Up_Time = 0;
 
 const int Motor_Num = 2;
 
@@ -52,7 +59,6 @@ const int Intermediary_Speed = 200;
 const int Start_Speed = 50; 
 const int Speed_Increment = 5; 
 const int Max_Speed = 255; 
-int currentSpeed[Motor_Num] = {0, 0}; //현재 속도 저장 배열
 
 void setup() {
   //TB6612FNG(기어드 모터)
@@ -116,9 +122,12 @@ void loop() {
     break;
     
     case Gripper_Open:
+    if (!Gripper_Open_Started) {
+      gripperStep = 0; // 그리퍼 단계 초기화
+      digitalWrite(DIR, HIGH);
+      Gripper_Open_Started = true;
+    }
     Open_Gripper();
-    delay(500);
-    changeState(Gripper_Close);
     break;
     
     case Gripper_Close:
@@ -142,7 +151,7 @@ void loop() {
   break;
 }
 }
-        
+
 void Move_Horizontal() {
   if (Horizontal_Speed ==0) {
     Horizontal_Speed = Start_Speed;
@@ -162,7 +171,7 @@ void Stop_Horizontal_Move() {
     Horizontal_Speed= Calculate_Speed; 
   } 
   analogWrite(PWMA, Horizontal_Speed);
-
+  
   if (Horizontal_Speed == 0) {
     Turn_Off_Horizontal_Motor();
   }
@@ -174,13 +183,18 @@ void Turn_Off_Horizontal_Motor() {
 }
 
 void Open_Gripper() {
-  digitalWrite(DIR, HIGH);
-  for(int i=0; i<stepsPerRevolution; i++) {
+  if (gripperStep < stepsPerRevolution) {
     digitalWrite(STR, HIGH);
     delayMicroseconds(100);
     
     digitalWrite(STR, LOW);
     delayMicroseconds(100);
+
+    gripperStep++;
+  } else {
+    Gripper_Open_Started = false;
+    changeState(Gripper_Close);
+    gripperStep = 0; // 그리퍼 단계 초기화
   }
 }
 
