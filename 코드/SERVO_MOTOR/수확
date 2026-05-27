@@ -1,0 +1,55 @@
+#include <Servo.h>
+#include <Adafruit_VL53L0X.h>
+
+Servo servo;
+
+const int Servo_Pin = 9;
+const int Total_Rotations = 3;
+const int Initial_Angle = 10;
+const int Max_Angle = 170;
+const int Angle_Increment = 10;
+
+int angle = 10;
+int Rotation = 0;
+int Direction = 1;
+
+bool Servo_Started = false;
+
+void setup() {
+  servo.attach(Servo_Pin);
+}
+
+void loop() {
+ if (Rotation < Total_Rotations) {
+    if (Direction == 1) {
+        Rotating_1();
+    } else if (Direction == -1) {
+        Rotating_2();
+    }
+ } else {
+    servo.detach();
+    Rotation = 0;
+    Direction = 1;
+    Servo_Started = false;
+    currentState(IDLE);
+    }
+}
+ void Rotating_1() {
+    if (angle < Max_Angle) {
+      angle += Angle_Increment;
+    } else if (angle >= Max_Angle) {
+      angle = Max_Angle;
+      Direction = -1;
+    }
+    servo.write(angle);
+}
+    void Rotating_2() {
+    if (angle > Initial_Angle) {
+      angle -= Angle_Increment;
+    } else if (angle <= Initial_Angle) {
+      angle = Initial_Angle;
+      Direction = 1;
+      Rotation++;
+    }
+    servo.write(angle);
+}
