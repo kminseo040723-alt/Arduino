@@ -38,23 +38,24 @@ const int DIR = 7;
 const int stepsPerRevolution = 9000;
 
 // BTS7960 수직 이동 모터 2개
-const int R_EN[] = { 22, 24 };
-const int L_EN[] = { 23, 25 };
-const int R_PWM[] = { 6, 9 };
-const int L_PWM[] = { 10, 11 };
+const int R_EN[] = { 8, 12 };
+const int L_EN[] = { 7, 13 };
+const int R_PWM[] = { 5, 10 };
+const int L_PWM[] = { 6, 11 };
 
 const int Motor_Num = 2;
 
 // Servo 모터
-Servo servo;
+Servo servos[2];
 
-const int Servo_Pin = 9;
+const int Servo_Pin[] = { 9, 10 };
+const int Servo_Num = 2;
 const int Total_Rotations = 3;
 const int Initial_Angle = 10;
 const int Max_Angle = 170;
 const int Angle_Increment = 10;
 
-int angle = 10;
+int angle = Initial_Angle;
 int Rotation = 0;
 int Direction = 1;
 
@@ -77,6 +78,7 @@ Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 
 int distance = 0;
 int failCount = 0;
+const int Intermediary_Distance = 80;
 const int Target_Distance = 800;
 const int Max_Fail_Count = 10;
 
@@ -124,9 +126,11 @@ void setup() {
         analogWrite(R_PWM[i], 0);
         analogWrite(L_PWM[i], 0);
     }
-    // Servo 모터
-    servo.attach(Servo_Pin);
 
+    // Servo 모터
+    for (int i = 0; i < Servo_Num; i++) {
+        servos[i].attach(Servo_Pin[i]);
+    }
 
     // 거리 센서
     if (!lox.begin()) {
@@ -163,33 +167,7 @@ void loop() {
         break;
 
     case Horizontal_Move:
-        if (!Horizontal_Move_Started) {
-            Horizontal_Move_Time = millis();
-            Horizontal_Move_Started = true;
-            digitalWrite(AIN1, HIGH);
-            digitalWrite(AIN2, LOW);
-        }
-
-        {
-            unsigned long elapsedTime = millis() - Horizontal_Move_Time;
-
-            if (elapsedTime <= 3000) {
-                Move_Horizontal();
-            }
-            else if (elapsedTime <= 5000) {
-                Stop_Horizontal_Move();
-            }
-            else {
-                analogWrite(PWMA, 0);
-                Turn_Off_Horizontal_Motor();
-
-                Horizontal_Speed = 0;
-                Horizontal_Move_Started = false;
-                changeState(Gripper_Open);
-            }
-        }
-
-        delay(50);
+        Horizontal_Moving();
         break;
 
     case Gripper_Open:
@@ -208,16 +186,39 @@ void loop() {
         Go_Up();
         break;
 
+
     case Harvesting:
         Harvest();
-        delay(500);
-        changeState(IDLE);
         break;
 
     case IDLE:
         Stop_Motors();
         break;
     }
+}
+
+void Horizontal_Moving() {
+    if (!Horizontal_Move_Started) {
+            Horizontal_Move_Time = millis();
+            Horizontal_Move_Started = true;
+            digitalWrite(AIN1, HIGH);
+            digitalWrite(AIN2, LOW);
+    }
+    unsigned long elapsedTime = millis() - Horizontal_Move_Time;
+    if (elapsedTime <= 3000) {
+        Move_Horizontal();
+    }
+    else if (elapsedTime <= 5000) {
+        Stop_Horizontal_Move();
+    }
+    else {
+    analogWrite(PWMA, 0);
+    Turn_Off_Horizontal_Motor();
+    Horizontal_Speed = 0;
+    Horizontal_Move_Started = false;
+    changeState(Gripper_Open);
+    }
+delay(50);
 }
 
 void Move_Horizontal() {
@@ -277,27 +278,19 @@ void Close_Gripper() {
 }
 
 void Go_Up() {
-    if (Read_Distance(distance)) {
+    if (Read_Distance(distance) && Read_MPU(Ax1,  Ay1, Az1, Gx1, Gy1, Gz1)) {
         failCount = 0;
 
-        if (!Read_MPU(Ax1, Ay1, Az1, Gx1, Gy1, Gz1)) {
-            Serial.println("Failed to read MPU6050 data");
-            Stop_Motors();
-            changeState(IDLE);
-            return;
-        }
-
         Calculate_Angle();
-
-        Serial.print("Distance: ");
-        Serial.println(distance);
-
-        if (distance >= Target_Distance) {
-            Stop_Motors();
-            changeState(Harvesting);
+        
+        if (distance < Intermediary_Distance) {
+          Accelerate_Climbing();
         }
-        else {
-            Climb_Up_With_Balance();
+        else if (distance >= Intermediary_Distance && distance < Target_Distance) {
+          Decelerate_Climbing();
+        } else if (distance >= Target_Distance) {
+          Stop_Motors();
+          changeState(Harvesting);
         }
     }
     else {
@@ -309,9 +302,9 @@ void Go_Up() {
             failCount = 0;
         }
     }
-
     delay(50);
 }
+
 
 bool Read_Distance(int& distance) {
     VL53L0X_RangingMeasurementData_t measure;
@@ -327,8 +320,7 @@ bool Read_Distance(int& distance) {
     }
 }
 
-bool Read_MPU(int16_t& Ax1, int16_t& Ay1, int16_t& Az1,
-    int16_t& Gx1, int16_t& Gy1, int16_t& Gz1) {
+bool Read_MPU(int16_t& Ax1, int16_t& Ay1, int16_t& Az1, int16_t& Gx1, int16_t& Gy1, int16_t& Gz1) {
 
     sensors_event_t accel, gyro, temp;
     mpu.getEvent(&accel, &gyro, &temp);
@@ -410,13 +402,22 @@ void Harvest() {
         Rotating_2();
     }
  } else {
-    servo.detach();
+    for (int i = 0; i < Servo_Num; i++) {
+        servos[i].detach();
+    }
     Rotation = 0;
     Direction = 1;
     Servo_Started = false;
-    currentState(IDLE);
+    changeState(IDLE);
     }
 }
+
+void Write_Servos(int targetAngle) {
+  for (int i = 0; i < Servo_Num; i++) {
+    servos[i].write(targetAngle);
+  }
+}
+
 void Rotating_1() {
     if (angle < Max_Angle) {
       angle += Angle_Increment;
@@ -424,9 +425,10 @@ void Rotating_1() {
       angle = Max_Angle;
       Direction = -1;
     }
-    servo.write(angle);
+    Write_Servos(angle);
+    delay (50);
 }
-    void Rotating_2() {
+void Rotating_2() {
     if (angle > Initial_Angle) {
       angle -= Angle_Increment;
     } else if (angle <= Initial_Angle) {
@@ -434,5 +436,6 @@ void Rotating_1() {
       Direction = 1;
       Rotation++;
     }
-    servo.write(angle);
+    Write_Servos(angle);
+        delay (50);
 }

@@ -1,6 +1,6 @@
 // BTS7960(기어드 모터_수직이동)
 const int R_EN[] = {7, 12};
-const int L_EN[] = {8, 13};
+const int L_EN[] = {8, 2};
 const int R_PWM[] = {5, 10};
 const int L_PWM[] = {6, 11};
 
