@@ -31,7 +31,6 @@ void loop() {
     Rotation = 0;
     Direction = 1;
     Servo_Started = false;
-    currentState(IDLE);
     }
 }
  void Rotating_1() {

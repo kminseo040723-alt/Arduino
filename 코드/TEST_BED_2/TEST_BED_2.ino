@@ -1,5 +1,4 @@
 
-
 enum RobotState {
   Start,
   Stop_5s,
@@ -108,8 +107,6 @@ void loop() {
   
     case Harvesting://<-------------------------------------------------------------------추가 필요
     Harvest();
-    delay(500);
-    changeState(IDLE);
     break;
   
     case IDLE:
@@ -204,6 +201,37 @@ void Stop_Motors() {
 }
 
 void Harvest() {
-  //수확 동작 구현
+ if (Rotation < Total_Rotations) {
+    if (Direction == 1) {
+        Rotating_1();
+    } else if (Direction == -1) {
+        Rotating_2();
+    }
+ } else {
+    servo.detach();
+    Rotation = 0;
+    Direction = 1;
+    Servo_Started = false;
+    currentState(IDLE);
+    }
+}
+void Rotating_1() {
+    if (angle < Max_Angle) {
+      angle += Angle_Increment;
+    } else if (angle >= Max_Angle) {
+      angle = Max_Angle;
+      Direction = -1;
+    }
+    servo.write(angle);
+}
+    void Rotating_2() {
+    if (angle > Initial_Angle) {
+      angle -= Angle_Increment;
+    } else if (angle <= Initial_Angle) {
+      angle = Initial_Angle;
+      Direction = 1;
+      Rotation++;
+    }
+    servo.write(angle);
 }
 
