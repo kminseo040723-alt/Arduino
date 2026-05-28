@@ -48,8 +48,6 @@ const int Motor_Num = 2;
 int baseSpeed = 0;
 
 bool Decelerate_Started = false;
-unsigned long Decelerate_Start_Time = 0;
-unsigned long Decelerate_Total_Time = 5000;
 // Servo 모터
 Servo servos[2];
 
@@ -75,6 +73,7 @@ const int Intermediary_Speed = 180;
 const int Start_Speed = 50;
 const int Speed_Increment = 5;
 const int Max_Speed = 255;
+const int Speed_Decrement = 5;
 
 int currentSpeed[Motor_Num] = { 0, 0 };
 
@@ -294,6 +293,7 @@ void Go_Up() {
           Decelerate_Climbing();
         } else if (distance >= Target_Distance) {
           Stop_Motors();
+          Decelerate_Started = false;
           changeState(Harvesting);
         }
     }
@@ -373,15 +373,11 @@ void Constant_Climbing() {
 
 void Decelerate_Climbing() {
     if (!Decelerate_Started) {
-        Decelerate_Start_Time = millis();
         Decelerate_Started = true;
         baseSpeed = Intermediary_Speed;
     }
     
-    unsigned long Decel_elapsedTime = millis() - Decelerate_Start_Time;
-
-    float Deceleration_Factor = (float)Decel_elapsedTime / Decelerate_Total_Time;
-    baseSpeed = Intermediary_Speed * (1 - Deceleration_Factor);
+    baseSpeed -= Speed_Decrement;
 
     baseSpeed = max(baseSpeed, 0);
 
@@ -396,8 +392,8 @@ void Decelerate_Climbing() {
     int leftSpeed = baseSpeed + correction;
     int rightSpeed = baseSpeed - correction;
 
-    leftSpeed = constrain(leftSpeed, Start_Speed, Max_Speed);
-    rightSpeed = constrain(rightSpeed, Start_Speed, Max_Speed);
+    leftSpeed = constrain(leftSpeed, 0, Max_Speed);
+    rightSpeed = constrain(rightSpeed, 0, Max_Speed);
 
 
     Set_Motor_Speed(0, leftSpeed);

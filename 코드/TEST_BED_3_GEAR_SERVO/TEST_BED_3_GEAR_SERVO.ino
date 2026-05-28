@@ -12,6 +12,7 @@ enum RobotState {
 void changeState(RobotState newState) {
   currentState = newState;
 }
+
 //시작 시간 설정
 unsigned long StartTime = 0;
 unsigned long Go_Up_Time = 0;
@@ -21,9 +22,9 @@ bool Go_Up_Started = false;
 
 //BTS7960(기어드 모터_수직이동)
 const int R_EN[] = {7,12};   //오른쪽 수평 이동 코드와 핀 번호 겹침
-const int L_EN[] = {8,13};   //왼쪽
-const int R_PWM[] = {5,10};  
-const int L_PWM[] = {6,11}; 
+const int L_EN[] = {8,2};   //왼쪽
+const int R_PWM[] = {6,3};  
+const int L_PWM[] = {5,11}; 
 
 
 const int Motor_Num = 2;
@@ -35,10 +36,10 @@ const int Speed_Increment = 5;
 const int Max_Speed = 255; 
 
 //서보모터
-Servo servos[2];
+Servo servos[1];
 
-const int Servo_Pin[] = {9, 10};
-const int Servo_Num = 2; 
+const int Servo_Pin[] = {1};
+const int Servo_Num = 1; 
 const int Total_Rotations = 3;
 const int Initial_Angle = 10;
 const int Max_Angle = 170;
@@ -47,8 +48,6 @@ const int Angle_Increment = 10;
 int angle = Initial_Angle;
 int Rotation = 0;
 int Direction = 1;
-
-bool Servo_Started = false;
 
 void setup() {
   
@@ -104,7 +103,7 @@ void Go_Up() {
     Go_Up_Time = millis();
     Go_Up_Started = true;
   }
-  if (millis() - Go_Up_Time <= 50000) {
+  if (millis() - Go_Up_Time <= 10000) {
       Climb_Up();
   } else {
     Stop_Motors();
@@ -127,8 +126,8 @@ void Set_Motor (int motor) {
   digitalWrite(L_EN[motor], HIGH);
 
   currentSpeed[motor] = Intermediary_Speed;
-  analogWrite(R_PWM[motor], currentSpeed[motor]);
-  analogWrite(L_PWM[motor], LOW);
+  analogWrite(R_PWM[motor], LOW);
+  analogWrite(L_PWM[motor], currentSpeed[motor]);
 }
 
 void Harvest () {
@@ -144,7 +143,6 @@ if (Rotation < Total_Rotations) {
     }
     Rotation = 0;
     Direction = 1;
-    Servo_Started = false;
     changeState(IDLE);
     }
 }
