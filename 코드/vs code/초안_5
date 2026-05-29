@@ -1,17 +1,15 @@
 #include <Adafruit_VL53L0X.h>
 #include <Servo.h>
 #include <Wire.h>
-#include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 
 enum RobotState {
     Start,
     Stop_5s,
-    Horizontal_Move,
     Gripper_Open,
+    Horizontal_Move,
     Gripper_Close,
-    Constant_Climb,
-    Decelerate_Climb,
+    Climb,
     Harvest,
     IDLE,
     Emergency_Stop
@@ -20,17 +18,16 @@ enum RobotState {
 struct StateConfig {
     RobotState state;
     void (*onEnter)();
-    void (*onUpdate)();
+    RobotState (*onUpdate)();
 };
 
 struct StateConfig stateConfigs[] = {
-    { Stop_5s, Stop_5s_Enter, nullptr },
-    { Horizontal_Move, Horizontal_Move_Enter, Horizontal_Moving },
-    { Gripper_Open, Gripper_Open_Enter, Gripper_Opening },
-    { Gripper_Close, Gripper_Close_Enter, Gripper_Closing },
-    { Constant_Climb, Constant_Climb_Enter, Constant_Climbing },
-    { Decelerate_Climb, Decelerate_Climb_Enter, Decelerate_Climbing },
-    { Harvest, Harvest_Enter, Harvesting },
+    { Stop_5s, Stop_5s_Enter, Stop_5s_Update },
+    { Gripper_Open, Gripper_Open_Enter, Gripper_Open_Update },
+    { Horizontal_Move, Horizontal_Move_Enter, Horizontal_Move_Update },
+    { Gripper_Close, Gripper_Close_Enter, Gripper_Close_Update },
+    { Climb, Climb_Enter, Climb_Update },
+    { Harvest, Harvest_Enter, Harvest_Update },
     { IDLE, IDLE_Enter, nullptr },
     { Emergency_Stop, Emergency_Stop_Enter, nullptr }
 };
@@ -100,20 +97,6 @@ const int Intermediary_Distance = 80;
 const int Target_Distance = 800;
 const int Max_Fail_Count = 10;
 
-// MPU6050
-Adafruit_MPU6050 mpu;
-
-int16_t Ax1, Ay1, Az1;
-int16_t Gx1, Gy1, Gz1;
-
-float pitch = 0.0;
-float roll = 0.0;
-
-const float Target_Angle = 0.0;
-const float Balance_Kp = 5.0;
-
-// 수평 허용 오차
-const float Angle_Deadband = 2.0;
 
 void setup() {
     Serial.begin(115200);
@@ -155,20 +138,6 @@ void setup() {
         Serial.println("VL53L0X not found");
         while (1);
     }
-    
-    // MPU6050
-    if (!mpu.begin()) {
-        Serial.println("Failed to find MPU6050 chip");
-        while (1) {
-            delay(10);
-        }
-    }
-    
-    mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
-    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
-    
-    Serial.println("Robot Ready");
 }
 
 void loop() {
@@ -179,11 +148,26 @@ void loop() {
         isNewState = false;
         return;
     }
-    
 
-void Start_Enter() {
+    RobotState nextState = currentStateConfig->state;
+
+    if (currentStateConfig->onUpdate != nullptr) {
+        nextState = currentStateConfig->onUpdate();
+    }
+
+    if (nextState != currentStateConfig->state || currentStateConfig->State != currentState) {
+        for (int i = 0; i < Num_States; i++) {
+            if (stateConfigs[i].state == nextState) {
+                currentStateConfig = &stateConfigs[i];
+                isNewState = true;
+                return;
+            }
+        }
+    }
+}
+void Stop_5s_Enter() {
     StartTime = millis();
-    return 
+    return Stop_5s_Update();
 }
 
 void Horizontal_Moving() {
