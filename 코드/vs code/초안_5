@@ -3,22 +3,15 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 
-enum RobotState {
-    Start,
-    Stop_5s,
-    Gripper_Open,
-    Horizontal_Move,
-    Gripper_Close,
-    Climb,
-    Harvest,
-    IDLE,
-    Emergency_Stop
+enum Signal {
+    PREV,
+   KEEP,
+   NEXT
 };
-
 struct StateConfig {
     RobotState state;
     void (*onEnter)();
-    RobotState (*onUpdate)();
+    Signal (*onUpdate)();
 };
 
 struct StateConfig stateConfigs[] = {
@@ -32,10 +25,18 @@ struct StateConfig stateConfigs[] = {
     { Emergency_Stop, Emergency_Stop_Enter, nullptr }
 };
 
-const int Num_States = sizeof(stateConfigs) / sizeof(StateConfig);
-StateConfig* currentStateConfig = &stateConfigs[0];
-
+int currentState_Index = 0;
 bool isNewState = true;
+unsigned long StartTime = 0;
+
+// HM0557 스텝모터
+const int STR = 8;
+const int DIR = 7;
+
+const int Steps_Per_Revolution_Open = 9000;
+const int Steps_Per_Revolution_Close = 9000;
+const int Step_Delay_Open = 100;
+const int Step_Delay_Close = 100;
 
 // TB6612FNG 수평 이동 모터
 const int PWMA = 5;
@@ -45,11 +46,13 @@ const int STBY = 4;
 
 int Horizontal_Speed = 0;
 int gripperStep = 0;
-
-// HM0557 스텝모터
-const int STR = 8;
-const int DIR = 7;
-const int stepsPerRevolution = 9000;
+unsigned long Horizontal_Move_Time = 0;
+unsigned long Horizontal_Change_Speed_Time=0;
+const int Horizontal_Start_Speed = 50;
+const int Horizontal_Speed_Increment = 5;
+const int Horizontal_Intermediary_Speed = 180;
+const unsigned long Horizontal_Acceleration_Interval = 50;
+const unsigned long Horizontal_Deceleration_Interval = 50;
 
 // BTS7960 수직 이동 모터 2개
 const int R_EN[] = { 8, 12 };
@@ -59,7 +62,13 @@ const int L_PWM[] = { 6, 11 };
 
 const int Motor_Num = 2;
 
-int baseSpeed = 0;
+int Climb_Speed = 0;
+unsigned long Climb_Time = 0;
+const int Climb_Start_Speed = 50;
+const int Climb_Speed_Increment = 5;
+const int Climb_Speed_Decrement = 5;
+const int Climb_Intermediary_Speed = 180;
+const int Climb_Max_Speed = 255;
 
 // Servo 모터
 Servo servos[2];
@@ -75,16 +84,7 @@ int angle = Initial_Angle;
 int Rotation = 0;
 int Direction = 1;
 
-// 시간 변수
-unsigned long StartTime = 0;
-unsigned long Horizontal_Move_Time = 0;
-
 // 속도 설정
-const int Intermediary_Speed = 180;
-const int Start_Speed = 50;
-const int Speed_Increment = 5;
-const int Max_Speed = 255;
-const int Speed_Decrement = 5;
 
 int currentSpeed[Motor_Num] = { 0, 0 };
 
@@ -93,8 +93,9 @@ Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 
 int distance = 0;
 int failCount = 0;
-const int Intermediary_Distance = 80;
-const int Target_Distance = 800;
+unsigned long 
+const int Climb_Intermediary_Distance = 80;
+const int Climb_Target_Distance = 800;
 const int Max_Fail_Count = 10;
 
 
@@ -102,6 +103,10 @@ void setup() {
     Serial.begin(115200);
     Wire.begin();
     
+    // 스텝모터
+    pinMode(STR, OUTPUT);
+    pinMode(DIR, OUTPUT);
+
     // TB6612FNG
     pinMode(STBY, OUTPUT);
     pinMode(PWMA, OUTPUT);
@@ -110,10 +115,6 @@ void setup() {
     
     digitalWrite(STBY, HIGH);
     analogWrite(PWMA, 0);
-    
-    // 스텝모터
-    pinMode(STR, OUTPUT);
-    pinMode(DIR, OUTPUT);
     
     // BTS7960
     for (int i = 0; i < Motor_Num; i++) {
@@ -142,130 +143,143 @@ void setup() {
 
 void loop() {
     if (isNewState) {
-        if (currentStateConfig->onEnter != nullptr) {
-            currentStateConfig->onEnter();
+        if (stateConfigs[currentState_Index].onEnter != nullptr) {
+            stateConfigs[currentState_Index].onEnter();
         }
         isNewState = false;
         return;
     }
 
-    RobotState nextState = currentStateConfig->state;
-
-    if (currentStateConfig->onUpdate != nullptr) {
-        nextState = currentStateConfig->onUpdate();
+    Signal nextSignal = KEEP;
+    if (stateConfigs[currentState_Index].onUpdate != nullptr) {
+        nextSignal = stateConfigs[currentState_Index].onUpdate();
     }
 
-    if (nextState != currentStateConfig->state || currentStateConfig->State != currentState) {
-        for (int i = 0; i < Num_States; i++) {
-            if (stateConfigs[i].state == nextState) {
-                currentStateConfig = &stateConfigs[i];
-                isNewState = true;
-                return;
-            }
+    if (nextSignal == NEXT) {
+        currentState_Index++;
+        if (currentState_Index >= sizeof(stateConfigs) / sizeof(StateConfig)) {
+            currentState_Index = 0;
         }
+        isNewState = true;
+    } else if (nextSignal == PREV) {
+        currentState_Index--;
+        if (currentState_Index < 0) {
+            currentState_Index = 0;
+        }
+        isNewState = true;
     }
 }
+
 void Stop_5s_Enter() {
     StartTime = millis();
-    return Stop_5s_Update();
 }
 
-void Horizontal_Moving() {
-    if (!Horizontal_Move_Started) {
-            Horizontal_Move_Time = millis();
-            Horizontal_Move_Started = true;
-            digitalWrite(AIN1, HIGH);
-            digitalWrite(AIN2, LOW);
+Signal Stop_5s_Update() {
+    if (millis() - StartTime >= 5000) {
+        return NEXT;
     }
+    return KEEP;
+}
+
+void Gripper_Open_Enter() {
+    digitalWrite(DIR, HIGH);
+}
+
+Signal Gripper_Open_Update() {
+    if (gripperStep < Steps_Per_Revolution_Open) {
+        digitalWrite(STR, HIGH);
+        delayMicroseconds(Step_Delay_Open);
+        digitalWrite(STR, LOW);
+        delayMicroseconds(Step_Delay_Open);
+        gripperStep++;
+    } else {
+        gripperStep = 0;
+        return NEXT;
+    }
+    return KEEP;
+}
+
+void Horizontal_Move_Enter() {
+    Horizontal_Move_Time = millis();
+    Horizontal_Change_Speed_Time = millis();
+    digitalWrite(AIN1, HIGH);
+    digitalWrite(AIN2, LOW);
+}
+
+Signal Horizontal_Move_Update() {
     unsigned long elapsedTime = millis() - Horizontal_Move_Time;
     if (elapsedTime <= 3000) {
-        Move_Horizontal();
+        Horizontal_Move();
+        return KEEP;
     }
-    else if (elapsedTime <= 5000) {
+    if (elapsedTime <= 5000) {
         Stop_Horizontal_Move();
+        return KEEP;
     }
-    else {
-    analogWrite(PWMA, 0);
+
     Turn_Off_Horizontal_Motor();
     Horizontal_Speed = 0;
-    Horizontal_Move_Started = false;
-    changeState(Gripper_Open);
-    }
-delay(50);
+    return NEXT;
 }
 
-void Move_Horizontal() {
-    if (Horizontal_Speed == 0) {
-        Horizontal_Speed = Start_Speed;
-    }
-    else if (Horizontal_Speed < Intermediary_Speed) {
-        Horizontal_Speed += Speed_Increment;
-    }
-    else {
-        Horizontal_Speed = Intermediary_Speed;
-    }
+void Horizontal_Move() {
+    if(millis() - Horizontal_Change_Speed_Time >=Horizontal_Acceleration_Interval) {
+        Horizontal_Change_Speed_Time = millis();
 
+        if(Horizontal_Speed == 0) {
+            Horizontal_Speed = Horizontal_Start_Speed;
+        } 
+        else {Horizontal_Speed =min(Horizontal_Speed + Horizontal_Speed_Increment, Horizontal_Intermediary_Speed);
+        }
+    }
     analogWrite(PWMA, Horizontal_Speed);
 }
 
 void Stop_Horizontal_Move() {
-    Horizontal_Speed -= Speed_Increment;
+    if (millis() - Horizontal_Change_Speed_Time >= Horizontal_Deceleration_Interval) {
+        Horizontal_Change_Speed_Time = millis();
 
-    if (Horizontal_Speed <= 0) {
-        Horizontal_Speed = 0;
-        Turn_Off_Horizontal_Motor();
+    Horizontal_Speed = max(0, Horizontal_Speed - Horizontal_Speed_Increment);
+    if (Horizontal_Speed == 0) {
+            Turn_Off_Horizontal_Motor();
+        }
     }
-
     analogWrite(PWMA, Horizontal_Speed);
 }
 
 void Turn_Off_Horizontal_Motor() {
+    analogWrite(PWMA, 0);
     digitalWrite(AIN1, LOW);
     digitalWrite(AIN2, LOW);
 }
 
-void Open_Gripper() {
-    digitalWrite(DIR, HIGH);
-
-    if (gripperStep < stepsPerRevolution) {
-        digitalWrite(STR, HIGH);
-        delayMicroseconds(100);
-        digitalWrite(STR, LOW);
-        delayMicroseconds(100);
-        gripperStep++;
-    } else {
-        gripperStep = 0;
-        changeState(Gripper_Close);
-    }
-}
-
-void Close_Gripper() {
+void Gripper_Close_Enter() {
     digitalWrite(DIR, LOW);
+}
 
-    if (gripperStep < stepsPerRevolution) {
+Signal Gripper_Close_Update() {
+    if (gripperStep < Steps_Per_Revolution_Close) {
         digitalWrite(STR, HIGH);
-        delayMicroseconds(100);
+        delayMicroseconds(Step_Delay_Close);
         digitalWrite(STR, LOW);
-        delayMicroseconds(100);
+        delayMicroseconds(Step_Delay_Close);
         gripperStep++;
     } else {
         gripperStep = 0;
-        changeState(Climbing);
+        return NEXT;
     }
+    return KEEP
 }
 
-void Go_Up() {
-    if (Read_Distance(distance) && Read_MPU(Ax1,  Ay1, Az1, Gx1, Gy1, Gz1)) {
-        failCount = 0;
+void Climb_Enter() {
+    failCount = 0;
+    
+    if (Read_Distance(distance)) {
 
-        Calculate_Angle();
-        
         if (distance < Intermediary_Distance) {
           Constant_Climbing();
         }
-        else if (distance >= Intermediary_Distance && distance < Target_Distance) {
-          Decelerate_Climbing();
-        } else if (distance >= Target_Distance) {
+        else if (distance >= Target_Distance) {
           Stop_Motors();
           Decelerate_Started = false;
           changeState(Harvesting);
@@ -298,31 +312,6 @@ bool Read_Distance(int& distance) {
     }
 }
 
-bool Read_MPU(int16_t& Ax1, int16_t& Ay1, int16_t& Az1, int16_t& Gx1, int16_t& Gy1, int16_t& Gz1) {
-
-    sensors_event_t accel, gyro, temp;
-    mpu.getEvent(&accel, &gyro, &temp);
-
-    Ax1 = accel.acceleration.x * 100;
-    Ay1 = accel.acceleration.y * 100;
-    Az1 = accel.acceleration.z * 100;
-
-    Gx1 = gyro.gyro.x * 1000;
-    Gy1 = gyro.gyro.y * 1000;
-    Gz1 = gyro.gyro.z * 1000;
-
-    return true;
-}
-
-void Calculate_Angle() {
-    pitch = atan2(Ay1, Az1) * 180.0 / PI;
-    roll = atan2(-Ax1, sqrt((float)Ay1 * Ay1 + (float)Az1 * Az1)) * 180.0 / PI;
-
-    Serial.print("Pitch: ");
-    Serial.print(pitch);
-    Serial.print(" | Roll: ");
-    Serial.println(roll);
-}
 
 void Constant_Climbing() {
     baseSpeed = Intermediary_Speed;
@@ -345,34 +334,7 @@ void Constant_Climbing() {
     Set_Motor_Speed(1, rightSpeed);
 }
 
-void Decelerate_Climbing() {
-    if (!Decelerate_Started) {
-        Decelerate_Started = true;
-        baseSpeed = Intermediary_Speed;
-    }
-    
-    baseSpeed -= Speed_Decrement;
 
-    baseSpeed = max(baseSpeed, 0);
-
-    float error = Target_Angle - pitch;
-
-    if (abs(error) < Angle_Deadband) {
-        error = 0;
-    }
-
-    int correction = error * Balance_Kp;
-
-    int leftSpeed = baseSpeed + correction;
-    int rightSpeed = baseSpeed - correction;
-
-    leftSpeed = constrain(leftSpeed, 0, Max_Speed);
-    rightSpeed = constrain(rightSpeed, 0, Max_Speed);
-
-
-    Set_Motor_Speed(0, leftSpeed);
-    Set_Motor_Speed(1, rightSpeed);
-}
 void Set_Motor_Speed(int motor, int speedValue) {
     digitalWrite(R_EN[motor], HIGH);
     digitalWrite(L_EN[motor], HIGH);

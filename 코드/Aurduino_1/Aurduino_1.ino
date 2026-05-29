@@ -1,0 +1,522 @@
+#include <Adafruit_VL53L0X.h>
+#include <Servo.h>
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+
+enum SystemMode {
+    MODE_IDLE,    
+    MODE_RUNNING, 
+    MODE_FAIL
+};
+
+SystemMode CurrentMode = MODE_IDLE;
+
+enum Signal {
+    KEEP,
+    NEXT,
+    RETRY,
+    FAIL
+};
+
+enum RobotState {    
+    Gripper_Open,    
+    Horizontal_Move,    
+    Gripper_Close,    
+    Climb,    
+    Harvest
+};
+struct StateConfig {
+    RobotState state;
+    void (*onEnter)();
+    Signal (*onUpdate)();
+};
+
+void Gripper_Open_Enter();
+Signal Gripper_Open_Update();
+
+void Horizontal_Move_Enter();
+Signal Horizontal_Move_Update();
+
+void Gripper_Close_Enter();
+Signal Gripper_Close_Update();
+
+void Climb_Enter();
+Signal Climb_Update();
+
+void Harvest_Enter();
+Signal Harvest_Update();
+
+struct StateConfig stateConfigs[] = {
+    { Gripper_Open, Gripper_Open_Enter, Gripper_Open_Update },
+    { Horizontal_Move, Horizontal_Move_Enter, Horizontal_Move_Update },
+    { Gripper_Close, Gripper_Close_Enter, Gripper_Close_Update },
+    { Climb, Climb_Enter, Climb_Update },
+    { Harvest, Harvest_Enter, Harvest_Update }
+};
+
+int System_Fail_Count = 0;
+const int System_Max_Fail_Count = 2;
+unsigned long System_Start_Time = 0;
+bool isNewSystem = true;
+int currentState_Index = 0;
+bool isNewState = true;
+
+//시작 5초 정지
+unsigned long StartTime = 0;
+
+// HM0557 스텝모터
+const int STR = 8;
+const int DIR = 7;
+
+const int Steps_Per_Revolution_Open = 9000;
+const int Steps_Per_Revolution_Close = 9000;
+const int Step_Delay_Open = 100;
+const int Step_Delay_Close = 100;
+
+// TB6612FNG 수평 이동 모터
+const int PWMA = 5;
+const int AIN1 = 2;
+const int AIN2 = 3;
+const int STBY = 4;
+
+const int Horizontal_Start_Speed = 50;
+const int Horizontal_Speed_Increment = 5;
+const int Horizontal_Intermediary_Speed = 180;
+const unsigned long Horizontal_Acceleration_Interval = 50;
+const unsigned long Horizontal_Deceleration_Interval = 50;
+const unsigned long Horizontal_Move_Duration = 3000;
+const unsigned long Stop_Horizontal_Move_Duration = 5000;
+int Horizontal_Speed = 0;
+int gripperStep = 0;
+unsigned long Horizontal_Move_Time = 0;
+unsigned long Horizontal_Change_Speed_Time=0;
+
+// BTS7960 수직 이동 모터 2개
+const int R_EN[] = { 8, 12 };
+const int L_EN[] = { 7, 13 };
+const int R_PWM[] = { 5, 10 };
+const int L_PWM[] = { 6, 11 };
+
+const int Motor_Num = 2;
+
+const int Climb_Start_Speed = 50;
+const int Climb_Speed_Increment = 5;
+const int Climb_Speed_Decrement = 5;
+const int Climb_Intermediary_Speed = 180;
+const int Climb_Max_Speed = 255;
+int Climb_Speed = 0;
+int currentSpeed[Motor_Num] = { 0, 0 };
+unsigned long Climb_Time = 0;
+
+// Servo 모터
+Servo servos[2];
+
+const int Servo_Pin[] = {9, 10};
+
+const int Servo_Num = 2;
+
+const int Servo_Total_Rotations = 3;
+const int Servo_Initial_Angle = 10;
+const int Servo_Max_Angle = 170;
+const int Servo_Angle_Increment = 10;
+const int Servo_Angle_Decrement = 10;
+const unsigned long Servo_1_Interval = 50;
+const unsigned long Servo_M1_Interval = 50;
+int Servo_Angle = Servo_Initial_Angle;
+int Servo_Rotation = 0;
+int Servo_Direction = 1;
+unsigned long Servo_Change_Angle_Time = 0;
+
+// VL53L0X 거리 센서
+Adafruit_VL53L0X lox = Adafruit_VL53L0X();
+
+const int Climb_Target_Distance = 800;
+const int Scan_Max_Fail_Count = 10;
+const unsigned long Scan_Interval = 50;
+int Climb_Distance = 0;
+int Scan_Fail_Count = 0;
+unsigned long Scan_Time=0;
+
+void Stop_Motors();
+void Stop_Gripper_Motor();
+void Stop_Horizontal_Motor();
+void Stop_Climbing();
+void Stop_Servo_Motor();
+void Horizontal_Move();
+void Stop_Horizontal_Move();
+void Constant_Climbing();
+void Set_Motor_Speed(int motor, int Motor_Speed);
+bool Read_Distance(int& Scan_distance); 
+void Rotating_1();
+void Rotating_2();
+void Write_Servos(int Target_Angle);
+
+void setup() {
+    Serial.begin(115200);
+    Wire.begin();
+    
+    // 스텝모터
+    pinMode(STR, OUTPUT);
+    pinMode(DIR, OUTPUT);
+
+    // TB6612FNG
+    pinMode(STBY, OUTPUT);
+    pinMode(PWMA, OUTPUT);
+    pinMode(AIN1, OUTPUT);
+    pinMode(AIN2, OUTPUT);
+    
+    digitalWrite(STBY, HIGH);
+    analogWrite(PWMA, 0);
+    
+    // BTS7960
+    for (int i = 0; i < Motor_Num; i++) {
+        pinMode(R_EN[i], OUTPUT);
+        pinMode(L_EN[i], OUTPUT);
+        pinMode(R_PWM[i], OUTPUT);
+        pinMode(L_PWM[i], OUTPUT);
+        
+        digitalWrite(R_EN[i], LOW);
+        digitalWrite(L_EN[i], LOW);
+        analogWrite(R_PWM[i], 0);
+        analogWrite(L_PWM[i], 0);
+    }
+    
+    // Servo 모터
+    for (int i = 0; i < Servo_Num; i++) {
+        servos[i].attach(Servo_Pin[i]);
+    }
+    
+    // 거리 센서
+    if (!lox.begin()) {
+        Serial.println("VL53L0X not found");
+        while (1);
+    }
+}
+
+void loop() {
+    switch(CurrentMode) {
+        case MODE_IDLE:
+            if (isNewSystem) {
+                Stop_Motors();
+                System_Start_Time = millis();
+                isNewSystem = false;
+            }
+
+            if (millis() - System_Start_Time >= 5000) {
+                currentState_Index = 0;
+                isNewState = true;
+                isNewSystem = true;
+                CurrentMode = MODE_RUNNING; 
+            }
+            break;
+        
+        case MODE_RUNNING:
+            if (isNewState) {
+                if (stateConfigs[currentState_Index].onEnter != nullptr) {
+                stateConfigs[currentState_Index].onEnter();
+            }
+            isNewState = false;
+            return;
+            }
+
+            Signal nextSignal = KEEP;
+            if (stateConfigs[currentState_Index].onUpdate != nullptr) {
+             nextSignal = stateConfigs[currentState_Index].onUpdate();
+            }
+
+            if (nextSignal == NEXT) {
+                currentState_Index++;
+                if (currentState_Index >= sizeof(stateConfigs) / sizeof(StateConfig)) {
+                    CurrentMode = MODE_FAIL;
+                    isNewSystem = true;
+                }else {
+                    isNewState = true;
+                }           
+            } else if (nextSignal == RETRY) {
+                isNewState = true;
+            } else if (nextSignal == FAIL) {
+                System_Fail_Count++;
+                if (System_Fail_Count <System_Max_Fail_Count) {
+                    CurrentMode = MODE_IDLE;
+                }
+                else {
+                   CurrentMode = MODE_FAIL;
+                    isNewSystem = true;
+                }
+            }
+            break;
+
+        case MODE_FAIL:
+            if (isNewSystem) {
+                Stop_Motors();
+                while(1);
+            }
+            break;
+    }
+}
+
+void Gripper_Open_Enter() {
+    gripperStep = 0;
+    digitalWrite(DIR, HIGH);
+}
+
+Signal Gripper_Open_Update() {
+    if (gripperStep < Steps_Per_Revolution_Open) {
+        digitalWrite(STR, HIGH);
+        delayMicroseconds(Step_Delay_Open);
+        digitalWrite(STR, LOW);
+        delayMicroseconds(Step_Delay_Open);
+        gripperStep++;
+    } else {
+        Stop_Gripper_Motor();
+        return NEXT;
+    }
+    return KEEP;
+}
+
+void Stop_Gripper_Motor() {
+    digitalWrite(STR, LOW);
+    gripperStep = 0;
+}
+
+void Horizontal_Move_Enter() {
+    Horizontal_Move_Time = millis();
+    Horizontal_Change_Speed_Time = millis();
+    Horizontal_Speed = 0;
+    gripperStep = 0;
+    digitalWrite(AIN1, HIGH);
+    digitalWrite(AIN2, LOW);
+}
+
+Signal Horizontal_Move_Update() {
+    unsigned long elapsedTime = millis() - Horizontal_Move_Time;
+    if (elapsedTime <= Horizontal_Move_Duration) {
+        Horizontal_Move();
+        return KEEP;
+    }
+    if (elapsedTime <= Stop_Horizontal_Move_Duration) {
+        Stop_Horizontal_Move();
+        if (Horizontal_Speed == 0) {
+            return NEXT;
+        }
+        return KEEP;
+    }
+
+    Stop_Horizontal_Motor();
+    Horizontal_Speed = 0;
+    return NEXT;
+}
+
+void Horizontal_Move() {
+    if(millis() - Horizontal_Change_Speed_Time >=Horizontal_Acceleration_Interval) {
+        Horizontal_Change_Speed_Time = millis();
+
+        if(Horizontal_Speed == 0) {
+            Horizontal_Speed = Horizontal_Start_Speed;
+        } 
+        else {
+            Horizontal_Speed =min(Horizontal_Speed + Horizontal_Speed_Increment, Horizontal_Intermediary_Speed);
+        }
+    }
+    analogWrite(PWMA, Horizontal_Speed);
+}
+
+void Stop_Horizontal_Move() {
+    if (millis() - Horizontal_Change_Speed_Time >= Horizontal_Deceleration_Interval) {
+        Horizontal_Change_Speed_Time = millis();
+
+    Horizontal_Speed = max(0, Horizontal_Speed - Horizontal_Speed_Increment);
+    if (Horizontal_Speed == 0) {
+            Stop_Horizontal_Motor();
+        }
+    }
+    analogWrite(PWMA, Horizontal_Speed);
+}
+
+void Stop_Horizontal_Motor() {
+    analogWrite(PWMA, 0);
+    digitalWrite(AIN1, LOW);
+    digitalWrite(AIN2, LOW);
+}
+
+void Gripper_Close_Enter() {
+    gripperStep = 0;
+    digitalWrite(DIR, LOW);
+}
+
+Signal Gripper_Close_Update() {
+    if (gripperStep < Steps_Per_Revolution_Close) {
+        digitalWrite(STR, HIGH);
+        delayMicroseconds(Step_Delay_Close);
+        digitalWrite(STR, LOW);
+        delayMicroseconds(Step_Delay_Close);
+        gripperStep++;
+    } else {
+        Stop_Gripper_Motor();
+        return NEXT;
+    }
+    return KEEP;
+}
+
+void Climb_Enter() {
+    Scan_Fail_Count = 0;
+    Climb_Speed = 0;
+    Climb_Time = millis();
+
+    Scan_Time = millis() - Scan_Interval;
+
+    for (int i = 0; i < Motor_Num; i++) {
+    digitalWrite(R_EN[i], HIGH);
+    digitalWrite(L_EN[i], HIGH);
+    }
+}
+
+Signal Climb_Update() {
+        if (millis() - Scan_Time >= Scan_Interval) {
+            Scan_Time = millis();
+
+            if (Read_Distance(Climb_Distance)) {
+                Scan_Fail_Count = 0;
+
+                if (Climb_Distance < Climb_Target_Distance) {
+                Constant_Climbing();
+                return KEEP;
+                }
+                if (Climb_Distance >= Climb_Target_Distance) {
+                Stop_Climbing();
+                return NEXT;
+                }
+            }
+            else {
+            Stop_Climbing();
+            Scan_Fail_Count++;
+
+            if (Scan_Fail_Count >= Scan_Max_Fail_Count) {
+                Scan_Fail_Count = 0;
+                return RETRY;
+            }
+        }
+    }
+    return KEEP;
+}
+
+
+bool Read_Distance(int& Scan_distance) {
+    VL53L0X_RangingMeasurementData_t measure;
+    lox.rangingTest(&measure, false);
+
+    if (measure.RangeStatus != 4) {
+        Scan_distance = measure.RangeMilliMeter;
+        return true;
+    }
+    else {
+        Serial.println("Sensor error");
+        return false;
+    }
+}
+
+void Constant_Climbing() { //가속도, 위치에 따라 변하는 함수 추가 필요 
+    Climb_Speed = Climb_Intermediary_Speed;
+
+    for (int i = 0; i < Motor_Num; i++) {
+    Set_Motor_Speed(i, Climb_Speed);
+    }
+}
+
+void Set_Motor_Speed(int motor, int Motor_Speed) {
+    if (motor < 0 || motor >= Motor_Num) return;
+
+    Motor_Speed = constrain (Motor_Speed, 0, Climb_Max_Speed);
+    currentSpeed[motor] = Motor_Speed;
+
+    analogWrite(R_PWM[motor], currentSpeed[motor]);
+    analogWrite(L_PWM[motor], 0);
+}
+
+void Stop_Climbing() {
+    for (int i = 0; i < Motor_Num; i++) {
+        analogWrite(R_PWM[i], 0);
+        analogWrite(L_PWM[i], 0);
+
+        digitalWrite(R_EN[i], LOW);
+        digitalWrite(L_EN[i], LOW);
+
+        currentSpeed[i] = 0;
+    }
+}
+
+void Harvest_Enter() {
+    for (int i = 0; i < Servo_Num; i++) {
+    if(!servos[i].attached()) {
+        servos[i].attach(Servo_Pin[i]);
+        }
+    }
+
+    Servo_Rotation = 0;
+    Servo_Direction = 1;
+    Servo_Change_Angle_Time = millis() - Servo_1_Interval;
+    Servo_Angle = Servo_Initial_Angle;
+}
+
+Signal Harvest_Update() {
+    if (Servo_Rotation >= Servo_Total_Rotations) {
+    Stop_Servo_Motor();
+    return NEXT; 
+    }
+
+    if (Servo_Direction == 1) {
+        if (millis() - Servo_Change_Angle_Time >= Servo_1_Interval) {
+            Servo_Change_Angle_Time = millis();
+            Rotating_1();
+        } 
+    }
+    else if (Servo_Direction == -1) {
+        if (millis() - Servo_Change_Angle_Time >= Servo_M1_Interval) {
+            Servo_Change_Angle_Time = millis();
+            Rotating_2();
+        }
+    }
+    return KEEP;
+}
+
+void Rotating_1() {
+    if (Servo_Angle < Servo_Max_Angle) {
+        Servo_Angle += Servo_Angle_Increment;
+    } else if (Servo_Angle >= Servo_Max_Angle) {
+        Servo_Angle = Servo_Max_Angle;
+        Servo_Direction = -1;
+    }
+    Write_Servos(Servo_Angle);
+}
+
+void Rotating_2() {
+    if (Servo_Angle > Servo_Initial_Angle) {
+      Servo_Angle -= Servo_Angle_Decrement;
+    } else if (Servo_Angle <= Servo_Initial_Angle) {
+        Servo_Angle = Servo_Initial_Angle;
+        Servo_Direction = 1;
+        Servo_Rotation++;
+    }
+    Write_Servos(Servo_Angle);
+}
+
+void Write_Servos(int Target_Angle) {
+  for (int i = 0; i < Servo_Num; i++) {
+    servos[i].write(Target_Angle);
+  }
+}
+
+void Stop_Servo_Motor() {
+    for (int i = 0; i < Servo_Num; i++) {
+        servos[i].detach();
+        }
+    Servo_Rotation = 0;
+    Servo_Direction = 1;
+}
+
+void Stop_Motors() {
+    Stop_Gripper_Motor();
+    Stop_Horizontal_Motor();
+    Stop_Climbing();
+    Stop_Servo_Motor();
+}
