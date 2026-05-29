@@ -1,0 +1,480 @@
+#include <Adafruit_VL53L0X.h>
+#include <Servo.h>
+#include <Wire.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+
+enum RobotState {
+    Start,
+    Stop_5s,
+    Horizontal_Move,
+    Gripper_Open,
+    Gripper_Close,
+    Climbing,
+    Harvesting,
+    IDLE,
+    Emergency_Stop
+};
+
+struct StateConfig {
+    RobotState state;
+    void (*onEnter)();
+    void (*onUpdate)();
+};
+
+struct StateConfig stateConfigs[] = {
+    { Start, Start_Enter, NULL },
+    { Stop_5s, Stop_5s_Enter, NULL },
+    { Horizontal_Move, Horizontal_Move_Enter, Horizontal_Moving },
+    { Gripper_Open, Open_Gripper, NULL },
+    { Gripper_Close, Close_Gripper, NULL },
+    { Climbing, Go_Up, NULL },
+    { Harvesting, Harvest, NULL },
+    { IDLE, IDLE_Enter, NULL },
+    { Emergency_Stop, Emergency_Stop_Enter, NULL }
+};
+
+// TB6612FNG 수평 이동 모터
+const int PWMA = 5;
+const int AIN1 = 2;
+const int AIN2 = 3;
+const int STBY = 4;
+
+bool Horizontal_Move_Started = false;
+int Horizontal_Speed = 0;
+int gripperStep = 0;
+
+// HM0557 스텝모터
+const int STR = 8;
+const int DIR = 7;
+const int stepsPerRevolution = 9000;
+
+// BTS7960 수직 이동 모터 2개
+const int R_EN[] = { 8, 12 };
+const int L_EN[] = { 7, 13 };
+const int R_PWM[] = { 5, 10 };
+const int L_PWM[] = { 6, 11 };
+
+const int Motor_Num = 2;
+
+int baseSpeed = 0;
+
+bool Decelerate_Started = false;
+// Servo 모터
+Servo servos[2];
+
+const int Servo_Pin[] = { 9, 10 };
+const int Servo_Num = 2;
+const int Total_Rotations = 3;
+const int Initial_Angle = 10;
+const int Max_Angle = 170;
+const int Angle_Increment = 10;
+
+int angle = Initial_Angle;
+int Rotation = 0;
+int Direction = 1;
+
+bool Servo_Started = false;
+
+// 시간 변수
+unsigned long StartTime = 0;
+unsigned long Horizontal_Move_Time = 0;
+
+// 속도 설정
+const int Intermediary_Speed = 180;
+const int Start_Speed = 50;
+const int Speed_Increment = 5;
+const int Max_Speed = 255;
+const int Speed_Decrement = 5;
+
+int currentSpeed[Motor_Num] = { 0, 0 };
+
+// VL53L0X 거리 센서
+Adafruit_VL53L0X lox = Adafruit_VL53L0X();
+
+int distance = 0;
+int failCount = 0;
+const int Intermediary_Distance = 80;
+const int Target_Distance = 800;
+const int Max_Fail_Count = 10;
+
+// MPU6050
+Adafruit_MPU6050 mpu;
+
+int16_t Ax1, Ay1, Az1;
+int16_t Gx1, Gy1, Gz1;
+
+float pitch = 0.0;
+float roll = 0.0;
+
+const float Target_Angle = 0.0;
+const float Balance_Kp = 5.0;
+
+// 수평 허용 오차
+const float Angle_Deadband = 2.0;
+
+void setup() {
+    Serial.begin(115200);
+    Wire.begin();
+
+    // TB6612FNG
+    pinMode(STBY, OUTPUT);
+    pinMode(PWMA, OUTPUT);
+    pinMode(AIN1, OUTPUT);
+    pinMode(AIN2, OUTPUT);
+
+    digitalWrite(STBY, HIGH);
+    analogWrite(PWMA, 0);
+
+    // 스텝모터
+    pinMode(STR, OUTPUT);
+    pinMode(DIR, OUTPUT);
+
+    // BTS7960
+    for (int i = 0; i < Motor_Num; i++) {
+        pinMode(R_EN[i], OUTPUT);
+        pinMode(L_EN[i], OUTPUT);
+        pinMode(R_PWM[i], OUTPUT);
+        pinMode(L_PWM[i], OUTPUT);
+
+        digitalWrite(R_EN[i], LOW);
+        digitalWrite(L_EN[i], LOW);
+        analogWrite(R_PWM[i], 0);
+        analogWrite(L_PWM[i], 0);
+    }
+
+    // Servo 모터
+    for (int i = 0; i < Servo_Num; i++) {
+        servos[i].attach(Servo_Pin[i]);
+    }
+
+    // 거리 센서
+    if (!lox.begin()) {
+        Serial.println("VL53L0X not found");
+        while (1);
+    }
+
+    // MPU6050
+    if (!mpu.begin()) {
+        Serial.println("Failed to find MPU6050 chip");
+        while (1) {
+            delay(10);
+        }
+    }
+
+    mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+
+    Serial.println("Robot Ready");
+}
+
+void loop() {
+    switch (currentState) {
+    case Start:
+        StartTime = millis();
+        changeState(Stop_5s);
+        break;
+
+    case Stop_5s:
+        if (millis() - StartTime >= 5000) {
+            changeState(Horizontal_Move);
+        }
+        break;
+
+    case Horizontal_Move:
+        Horizontal_Moving();
+        break;
+
+    case Gripper_Open:
+        Open_Gripper();
+        break;
+
+    case Gripper_Close:
+        Close_Gripper();
+        break;
+
+    case Climbing:
+        Go_Up();
+        break;
+
+    case Harvesting:
+        Harvest();
+        break;
+
+    case IDLE:
+        Stop_Motors();
+        break;
+    }
+}
+
+void Horizontal_Moving() {
+    if (!Horizontal_Move_Started) {
+            Horizontal_Move_Time = millis();
+            Horizontal_Move_Started = true;
+            digitalWrite(AIN1, HIGH);
+            digitalWrite(AIN2, LOW);
+    }
+    unsigned long elapsedTime = millis() - Horizontal_Move_Time;
+    if (elapsedTime <= 3000) {
+        Move_Horizontal();
+    }
+    else if (elapsedTime <= 5000) {
+        Stop_Horizontal_Move();
+    }
+    else {
+    analogWrite(PWMA, 0);
+    Turn_Off_Horizontal_Motor();
+    Horizontal_Speed = 0;
+    Horizontal_Move_Started = false;
+    changeState(Gripper_Open);
+    }
+delay(50);
+}
+
+void Move_Horizontal() {
+    if (Horizontal_Speed == 0) {
+        Horizontal_Speed = Start_Speed;
+    }
+    else if (Horizontal_Speed < Intermediary_Speed) {
+        Horizontal_Speed += Speed_Increment;
+    }
+    else {
+        Horizontal_Speed = Intermediary_Speed;
+    }
+
+    analogWrite(PWMA, Horizontal_Speed);
+}
+
+void Stop_Horizontal_Move() {
+    Horizontal_Speed -= Speed_Increment;
+
+    if (Horizontal_Speed <= 0) {
+        Horizontal_Speed = 0;
+        Turn_Off_Horizontal_Motor();
+    }
+
+    analogWrite(PWMA, Horizontal_Speed);
+}
+
+void Turn_Off_Horizontal_Motor() {
+    digitalWrite(AIN1, LOW);
+    digitalWrite(AIN2, LOW);
+}
+
+void Open_Gripper() {
+    digitalWrite(DIR, HIGH);
+
+    if (gripperStep < stepsPerRevolution) {
+        digitalWrite(STR, HIGH);
+        delayMicroseconds(100);
+        digitalWrite(STR, LOW);
+        delayMicroseconds(100);
+        gripperStep++;
+    } else {
+        gripperStep = 0;
+        changeState(Gripper_Close);
+    }
+}
+
+void Close_Gripper() {
+    digitalWrite(DIR, LOW);
+
+    if (gripperStep < stepsPerRevolution) {
+        digitalWrite(STR, HIGH);
+        delayMicroseconds(100);
+        digitalWrite(STR, LOW);
+        delayMicroseconds(100);
+        gripperStep++;
+    } else {
+        gripperStep = 0;
+        changeState(Climbing);
+    }
+}
+
+void Go_Up() {
+    if (Read_Distance(distance) && Read_MPU(Ax1,  Ay1, Az1, Gx1, Gy1, Gz1)) {
+        failCount = 0;
+
+        Calculate_Angle();
+        
+        if (distance < Intermediary_Distance) {
+          Constant_Climbing();
+        }
+        else if (distance >= Intermediary_Distance && distance < Target_Distance) {
+          Decelerate_Climbing();
+        } else if (distance >= Target_Distance) {
+          Stop_Motors();
+          Decelerate_Started = false;
+          changeState(Harvesting);
+        }
+    }
+    else {
+        Stop_Motors();
+        failCount++;
+
+        if (failCount >= Max_Fail_Count) {
+            changeState(IDLE);
+            failCount = 0;
+        }
+    }
+    delay(50);
+}
+
+
+bool Read_Distance(int& distance) {
+    VL53L0X_RangingMeasurementData_t measure;
+    lox.rangingTest(&measure, false);
+
+    if (measure.RangeStatus != 4) {
+        distance = measure.RangeMilliMeter;
+        return true;
+    }
+    else {
+        Serial.println("Sensor error");
+        return false;
+    }
+}
+
+bool Read_MPU(int16_t& Ax1, int16_t& Ay1, int16_t& Az1, int16_t& Gx1, int16_t& Gy1, int16_t& Gz1) {
+
+    sensors_event_t accel, gyro, temp;
+    mpu.getEvent(&accel, &gyro, &temp);
+
+    Ax1 = accel.acceleration.x * 100;
+    Ay1 = accel.acceleration.y * 100;
+    Az1 = accel.acceleration.z * 100;
+
+    Gx1 = gyro.gyro.x * 1000;
+    Gy1 = gyro.gyro.y * 1000;
+    Gz1 = gyro.gyro.z * 1000;
+
+    return true;
+}
+
+void Calculate_Angle() {
+    pitch = atan2(Ay1, Az1) * 180.0 / PI;
+    roll = atan2(-Ax1, sqrt((float)Ay1 * Ay1 + (float)Az1 * Az1)) * 180.0 / PI;
+
+    Serial.print("Pitch: ");
+    Serial.print(pitch);
+    Serial.print(" | Roll: ");
+    Serial.println(roll);
+}
+
+void Constant_Climbing() {
+    baseSpeed = Intermediary_Speed;
+
+    float error = Target_Angle - pitch;
+
+    if (abs(error) < Angle_Deadband) {
+        error = 0;
+    }
+
+    int correction = error * Balance_Kp;
+
+    int leftSpeed = baseSpeed + correction;
+    int rightSpeed = baseSpeed - correction;
+
+    leftSpeed = constrain(leftSpeed, Start_Speed, Max_Speed);
+    rightSpeed = constrain(rightSpeed, Start_Speed, Max_Speed);
+
+    Set_Motor_Speed(0, leftSpeed);
+    Set_Motor_Speed(1, rightSpeed);
+}
+
+void Decelerate_Climbing() {
+    if (!Decelerate_Started) {
+        Decelerate_Started = true;
+        baseSpeed = Intermediary_Speed;
+    }
+    
+    baseSpeed -= Speed_Decrement;
+
+    baseSpeed = max(baseSpeed, 0);
+
+    float error = Target_Angle - pitch;
+
+    if (abs(error) < Angle_Deadband) {
+        error = 0;
+    }
+
+    int correction = error * Balance_Kp;
+
+    int leftSpeed = baseSpeed + correction;
+    int rightSpeed = baseSpeed - correction;
+
+    leftSpeed = constrain(leftSpeed, 0, Max_Speed);
+    rightSpeed = constrain(rightSpeed, 0, Max_Speed);
+
+
+    Set_Motor_Speed(0, leftSpeed);
+    Set_Motor_Speed(1, rightSpeed);
+}
+void Set_Motor_Speed(int motor, int speedValue) {
+    digitalWrite(R_EN[motor], HIGH);
+    digitalWrite(L_EN[motor], HIGH);
+
+    currentSpeed[motor] = speedValue;
+
+    analogWrite(R_PWM[motor], currentSpeed[motor]);
+    analogWrite(L_PWM[motor], 0);
+}
+
+void Stop_Motors() {
+    for (int i = 0; i < Motor_Num; i++) {
+        analogWrite(R_PWM[i], 0);
+        analogWrite(L_PWM[i], 0);
+
+        digitalWrite(R_EN[i], LOW);
+        digitalWrite(L_EN[i], LOW);
+
+        currentSpeed[i] = 0;
+    }
+}
+
+void Harvest() {
+ if (Rotation < Total_Rotations) {
+    if (Direction == 1) {
+        Rotating_1();
+    } else if (Direction == -1) {
+        Rotating_2();
+    }
+ } else {
+    for (int i = 0; i < Servo_Num; i++) {
+        servos[i].detach();
+    }
+    Rotation = 0;
+    Direction = 1;
+    Servo_Started = false;
+    changeState(IDLE);
+    }
+}
+
+void Write_Servos(int targetAngle) {
+  for (int i = 0; i < Servo_Num; i++) {
+    servos[i].write(targetAngle);
+  }
+}
+
+void Rotating_1() {
+    if (angle < Max_Angle) {
+      angle += Angle_Increment;
+    } else if (angle >= Max_Angle) {
+      angle = Max_Angle;
+      Direction = -1;
+    }
+    Write_Servos(angle);
+    delay (50);
+}
+void Rotating_2() {
+    if (angle > Initial_Angle) {
+      angle -= Angle_Increment;
+    } else if (angle <= Initial_Angle) {
+      angle = Initial_Angle;
+      Direction = 1;
+      Rotation++;
+    }
+    Write_Servos(angle);
+        delay (50);
+}
