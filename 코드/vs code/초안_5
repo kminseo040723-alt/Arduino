@@ -31,34 +31,34 @@ struct StateConfig {
     Signal (*onUpdate)();
 };
 
-// void Gripper_Open_Enter();
-// Signal Gripper_Open_Update();
+void Gripper_Open_Enter();
+Signal Gripper_Open_Update();
 
 void Horizontal_Move_Enter();
 Signal Horizontal_Move_Update();
 
-// void Gripper_Close_Enter();
-// Signal Gripper_Close_Update();
+void Gripper_Close_Enter();
+Signal Gripper_Close_Update();
 
-// void Climb_Enter();
-// Signal Climb_Update();
+void Climb_Enter();
+Signal Climb_Update();
 
-// void Harvest_Enter();
-// Signal Harvest_Update();
+void Harvest_Enter();
+Signal Harvest_Update();
 
 struct StateConfig stateConfigs[] = {
-    // { Gripper_Open, Gripper_Open_Enter, Gripper_Open_Update },
+    { Gripper_Open, Gripper_Open_Enter, Gripper_Open_Update },
     { Horizontal_Move, Horizontal_Move_Enter, Horizontal_Move_Update },
-    // { Gripper_Close, Gripper_Close_Enter, Gripper_Close_Update },
-    // { Climb, Climb_Enter, Climb_Update },
-    // { Harvest, Harvest_Enter, Harvest_Update }
+    { Gripper_Close, Gripper_Close_Enter, Gripper_Close_Update },
+    { Climb, Climb_Enter, Climb_Update },
+    { Harvest, Harvest_Enter, Harvest_Update }
 };
 
-int System_Fail_Count = 0;
+int System_Fail_Count;
 const int System_Max_Fail_Count = 2;
-unsigned long System_Start_Time = 0;
+unsigned long System_Start_Time;
 bool isNewSystem = true;
-int currentState_Index = 0;
+int currentState_Index;
 bool isNewState = true;
 const unsigned long StartTime = 2000;
 
@@ -70,7 +70,7 @@ const int Steps_Per_Revolution_Open = 14400;
 const int Steps_Per_Revolution_Close = 14400;
 const int Step_Delay_Open = 1000;
 const int Step_Delay_Close = 1000;
-int gripperStep = 0;
+int gripperStep;
 
 // TB6612FNG 수평 이동 모터
 const int PWMA = 5;
@@ -82,12 +82,12 @@ const int Move_Horizontal_Start_Speed = 50;
 const int Move_Horizontal_Speed_Increment = 5;
 const int Move_Horizontal_Intermediary_Speed = 180;
 const unsigned long Move_Horizontal_Acceleration_Interval = 200;
-const unsigned long Move_Horizontal_Deceleration_Interval = 00;
+const unsigned long Move_Horizontal_Deceleration_Interval = 200;
 const unsigned long Move_Horizontal_Duration = 3000;
 const unsigned long Move_Horizontal_Deceleration_Duration = 4000;
-int Move_Horizontal_Speed = 0;
-unsigned long Move_Horizontal_Time = 0;
-unsigned long Move_Horizontal_Change_Speed_Time=0;
+int Move_Horizontal_Speed;
+unsigned long Move_Horizontal_Time;
+unsigned long Move_Horizontal_Change_Speed_Time;
 
 // BTS7960 수직 이동 모터 2개
 const int R_EN[] = { 8, 12 };
@@ -102,9 +102,9 @@ const int Climb_Speed_Increment = 5;
 const int Climb_Speed_Decrement = 5;
 const int Climb_Intermediary_Speed = 180;
 const int Climb_Max_Speed = 255;
-int Climb_Speed = 0;
+int Climb_Speed;
 int currentSpeed[Motor_Num] = { 0, 0 };
-unsigned long Climb_Time = 0;
+unsigned long Climb_Time;
 
 // Servo 모터
 Servo servos[2];
@@ -121,9 +121,9 @@ const int Servo_Angle_Decrement = 10;
 const unsigned long Servo_1_Interval = 100;
 const unsigned long Servo_M1_Interval = 100;
 int Servo_Angle = Servo_Initial_Angle;
-int Servo_Rotation = 0;
+int Servo_Rotation;
 int Servo_Direction = 1;
-unsigned long Servo_Change_Angle_Time = 0;
+unsigned long Servo_Change_Angle_Time;
 
 // VL53L0X 거리 센서
 Adafruit_VL53L0X lox = Adafruit_VL53L0X();
@@ -132,10 +132,10 @@ const int Climb_Target_Distance = 800;
 const int Scan_Max_Fail_Count = 10;
 const int Climb_Max_Retry_Count = 2;
 const unsigned long Scan_Interval = 50;
-int Climb_Distance = 0;
-int Scan_Fail_Count = 0;
-int Climb_Retry_Count = 0;
-unsigned long Scan_Time=0;
+int Climb_Distance;
+int Scan_Fail_Count;
+int Climb_Retry_Count;
+unsigned long Scan_Time;
 
 void Stop_Motors();
 void Stop_Gripper_Motor();
@@ -166,7 +166,7 @@ void setup() {
     pinMode(AIN2, OUTPUT);
     
     digitalWrite(STBY, HIGH);
-    
+
     analogWrite(PWMA, 0);
     
     // BTS7960
