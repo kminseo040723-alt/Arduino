@@ -79,17 +79,17 @@ const int AIN1 = 2;
 const int AIN2 = 3;
 const int STBY = 4;
 
-const int Horizontal_Start_Speed = 50;
-const int Horizontal_Speed_Increment = 5;
-const int Horizontal_Intermediary_Speed = 180;
-const unsigned long Horizontal_Acceleration_Interval = 50;
-const unsigned long Horizontal_Deceleration_Interval = 50;
-const unsigned long Horizontal_Move_Duration = 3000;
-const unsigned long Stop_Horizontal_Move_Duration = 5000;
-int Horizontal_Speed = 0;
+const int Move_Horizontal_Start_Speed = 50;
+const int Move_Horizontal_Speed_Increment = 5;
+const int Move_Horizontal_Intermediary_Speed = 180;
+const unsigned long Move_Horizontal_Acceleration_Interval = 50;
+const unsigned long Move_Horizontal_Deceleration_Interval = 50;
+const unsigned long Move_Horizontal_Duration = 3000;
+const unsigned long Stop_Moving_Horizontal_Duration = 2000;
+int Move_Horizontal_Speed = 0;
 int gripperStep = 0;
-unsigned long Horizontal_Move_Time = 0;
-unsigned long Horizontal_Change_Speed_Time=0;
+unsigned long Move_Horizontal_Time = 0;
+unsigned long Move_Horizontal_Change_Speed_Time=0;
 
 // BTS7960 수직 이동 모터 2개
 const int R_EN[] = { 8, 12 };
@@ -142,8 +142,8 @@ void Stop_Gripper_Motor();
 void Stop_Horizontal_Motor();
 void Stop_Climbing();
 void Stop_Servo_Motor();
-void Horizontal_Move();
-void Stop_Horizontal_Move();
+void Move_Horizontal();
+void Stop_Moving_Horizontal();
 void Constant_Climbing();
 void Set_Motor_Speed(int motor, int Motor_Speed);
 bool Read_Distance(int& Scan_distance); 
@@ -227,8 +227,8 @@ void loop() {
             if (nextSignal == NEXT) {
                 currentState_Index++;
                 if (currentState_Index >= sizeof(stateConfigs) / sizeof(StateConfig)) {
-                    CurrentMode = MODE_FAIL;
                     isNewSystem = true;
+                    CurrentMode = MODE_FAIL;
                 }else {
                     isNewState = true;
                 }           
@@ -240,8 +240,8 @@ void loop() {
                     CurrentMode = MODE_IDLE;
                 }
                 else {
-                   CurrentMode = MODE_FAIL;
                     isNewSystem = true;
+                   CurrentMode = MODE_FAIL;
                 }
             }
             break;
@@ -280,57 +280,56 @@ void Stop_Gripper_Motor() {
 }
 
 void Horizontal_Move_Enter() {
-    Horizontal_Move_Time = millis();
-    Horizontal_Change_Speed_Time = millis();
-    Horizontal_Speed = 0;
-    gripperStep = 0;
+    Move_Horizontal_Time = millis();
+    Move_Horizontal_Change_Speed_Time = millis();
+    Move_Horizontal_Speed = 0;
     digitalWrite(AIN1, HIGH);
     digitalWrite(AIN2, LOW);
 }
 
 Signal Horizontal_Move_Update() {
-    unsigned long elapsedTime = millis() - Horizontal_Move_Time;
-    if (elapsedTime <= Horizontal_Move_Duration) {
-        Horizontal_Move();
+    unsigned long elapsedTime = millis() - Move_Horizontal_Time;
+    if (elapsedTime <= Move_Horizontal_Duration) {
+        Move_Horizontal();
         return KEEP;
     }
-    if (elapsedTime <= Stop_Horizontal_Move_Duration) {
-        Stop_Horizontal_Move();
-        if (Horizontal_Speed == 0) {
+    if (elapsedTime <= Move_Horizontal_Duration + Stop_Moving_Horizontal_Duration) {
+        Stop_Moving_Horizontal ();
+        if (Move_Horizontal_Speed == 0) {
             return NEXT;
         }
         return KEEP;
     }
 
     Stop_Horizontal_Motor();
-    Horizontal_Speed = 0;
+    Move_Horizontal_Speed = 0;
     return NEXT;
 }
 
-void Horizontal_Move() {
-    if(millis() - Horizontal_Change_Speed_Time >=Horizontal_Acceleration_Interval) {
-        Horizontal_Change_Speed_Time = millis();
+void Move_Horizontal() {
+    if(millis() - Move_Horizontal_Change_Speed_Time >= Move_Horizontal_Acceleration_Interval) {
+        Move_Horizontal_Change_Speed_Time = millis();
 
-        if(Horizontal_Speed == 0) {
-            Horizontal_Speed = Horizontal_Start_Speed;
+        if(Move_Horizontal_Speed == 0) {
+            Move_Horizontal_Speed = Move_Horizontal_Start_Speed;
         } 
         else {
-            Horizontal_Speed =min(Horizontal_Speed + Horizontal_Speed_Increment, Horizontal_Intermediary_Speed);
+            Move_Horizontal_Speed =min(Move_Horizontal_Speed + Move_Horizontal_Speed_Increment, Move_Horizontal_Intermediary_Speed);
         }
     }
-    analogWrite(PWMA, Horizontal_Speed);
+    analogWrite(PWMA, Move_Horizontal_Speed);
 }
 
-void Stop_Horizontal_Move() {
-    if (millis() - Horizontal_Change_Speed_Time >= Horizontal_Deceleration_Interval) {
-        Horizontal_Change_Speed_Time = millis();
+void Stop_Moving_Horizontal () {
+    if (millis() - Move_Horizontal_Change_Speed_Time >= Move_Horizontal_Deceleration_Interval) {
+        Move_Horizontal_Change_Speed_Time = millis();
 
-    Horizontal_Speed = max(0, Horizontal_Speed - Horizontal_Speed_Increment);
-    if (Horizontal_Speed == 0) {
+    Move_Horizontal_Speed = max(0, Move_Horizontal_Speed - Move_Horizontal_Speed_Increment);
+    if (Move_Horizontal_Speed == 0) {
             Stop_Horizontal_Motor();
         }
     }
-    analogWrite(PWMA, Horizontal_Speed);
+    analogWrite(PWMA, Move_Horizontal_Speed);
 }
 
 void Stop_Horizontal_Motor() {
