@@ -31,27 +31,27 @@ struct StateConfig {
     Signal (*onUpdate)();
 };
 
-void Gripper_Open_Enter();
-Signal Gripper_Open_Update();
+// void Gripper_Open_Enter();
+// Signal Gripper_Open_Update();
 
 void Horizontal_Move_Enter();
 Signal Horizontal_Move_Update();
 
-void Gripper_Close_Enter();
-Signal Gripper_Close_Update();
+// void Gripper_Close_Enter();
+// Signal Gripper_Close_Update();
 
-void Climb_Enter();
-Signal Climb_Update();
+// void Climb_Enter();
+// Signal Climb_Update();
 
-void Harvest_Enter();
-Signal Harvest_Update();
+// void Harvest_Enter();
+// Signal Harvest_Update();
 
 struct StateConfig stateConfigs[] = {
-    { Gripper_Open, Gripper_Open_Enter, Gripper_Open_Update },
+    // { Gripper_Open, Gripper_Open_Enter, Gripper_Open_Update },
     { Horizontal_Move, Horizontal_Move_Enter, Horizontal_Move_Update },
-    { Gripper_Close, Gripper_Close_Enter, Gripper_Close_Update },
-    { Climb, Climb_Enter, Climb_Update },
-    { Harvest, Harvest_Enter, Harvest_Update }
+    // { Gripper_Close, Gripper_Close_Enter, Gripper_Close_Update },
+    // { Climb, Climb_Enter, Climb_Update },
+    // { Harvest, Harvest_Enter, Harvest_Update }
 };
 
 int System_Fail_Count = 0;
@@ -60,34 +60,32 @@ unsigned long System_Start_Time = 0;
 bool isNewSystem = true;
 int currentState_Index = 0;
 bool isNewState = true;
-
-//시작 5초 정지
-unsigned long StartTime = 0;
+const unsigned long StartTime = 2000;
 
 // HM0557 스텝모터
 const int STR = 8;
 const int DIR = 7;
 
-const int Steps_Per_Revolution_Open = 9000;
-const int Steps_Per_Revolution_Close = 9000;
-const int Step_Delay_Open = 100;
-const int Step_Delay_Close = 100;
+const int Steps_Per_Revolution_Open = 14400;
+const int Steps_Per_Revolution_Close = 14400;
+const int Step_Delay_Open = 1000;
+const int Step_Delay_Close = 1000;
+int gripperStep = 0;
 
 // TB6612FNG 수평 이동 모터
 const int PWMA = 5;
-const int AIN1 = 2;
-const int AIN2 = 3;
-const int STBY = 4;
+const int AIN1 = 3;
+const int AIN2 = 4;
+const int STBY = 9;
 
 const int Move_Horizontal_Start_Speed = 50;
 const int Move_Horizontal_Speed_Increment = 5;
 const int Move_Horizontal_Intermediary_Speed = 180;
-const unsigned long Move_Horizontal_Acceleration_Interval = 50;
-const unsigned long Move_Horizontal_Deceleration_Interval = 50;
+const unsigned long Move_Horizontal_Acceleration_Interval = 200;
+const unsigned long Move_Horizontal_Deceleration_Interval = 00;
 const unsigned long Move_Horizontal_Duration = 3000;
-const unsigned long Stop_Moving_Horizontal_Duration = 2000;
+const unsigned long Move_Horizontal_Deceleration_Duration = 4000;
 int Move_Horizontal_Speed = 0;
-int gripperStep = 0;
 unsigned long Move_Horizontal_Time = 0;
 unsigned long Move_Horizontal_Change_Speed_Time=0;
 
@@ -111,7 +109,7 @@ unsigned long Climb_Time = 0;
 // Servo 모터
 Servo servos[2];
 
-const int Servo_Pin[] = {9, 10};
+const int Servo_Pin[] = {11, 10};
 
 const int Servo_Num = 2;
 
@@ -120,8 +118,8 @@ const int Servo_Initial_Angle = 10;
 const int Servo_Max_Angle = 170;
 const int Servo_Angle_Increment = 10;
 const int Servo_Angle_Decrement = 10;
-const unsigned long Servo_1_Interval = 50;
-const unsigned long Servo_M1_Interval = 50;
+const unsigned long Servo_1_Interval = 100;
+const unsigned long Servo_M1_Interval = 100;
 int Servo_Angle = Servo_Initial_Angle;
 int Servo_Rotation = 0;
 int Servo_Direction = 1;
@@ -132,9 +130,11 @@ Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 
 const int Climb_Target_Distance = 800;
 const int Scan_Max_Fail_Count = 10;
+const int Climb_Max_Retry_Count = 2;
 const unsigned long Scan_Interval = 50;
 int Climb_Distance = 0;
 int Scan_Fail_Count = 0;
+int Climb_Retry_Count = 0;
 unsigned long Scan_Time=0;
 
 void Stop_Motors();
@@ -166,6 +166,7 @@ void setup() {
     pinMode(AIN2, OUTPUT);
     
     digitalWrite(STBY, HIGH);
+    
     analogWrite(PWMA, 0);
     
     // BTS7960
@@ -202,7 +203,7 @@ void loop() {
                 isNewSystem = false;
             }
 
-            if (millis() - System_Start_Time >= 5000) {
+            if (millis() - System_Start_Time >= StartTime) {
                 currentState_Index = 0;
                 isNewState = true;
                 isNewSystem = true;
@@ -227,6 +228,7 @@ void loop() {
             if (nextSignal == NEXT) {
                 currentState_Index++;
                 if (currentState_Index >= sizeof(stateConfigs) / sizeof(StateConfig)) {
+                    System_Fail_Count = 0;
                     isNewSystem = true;
                     CurrentMode = MODE_FAIL;
                 }else {
@@ -237,6 +239,7 @@ void loop() {
             } else if (nextSignal == FAIL) {
                 System_Fail_Count++;
                 if (System_Fail_Count <System_Max_Fail_Count) {
+                    isNewSystem = true;
                     CurrentMode = MODE_IDLE;
                 }
                 else {
@@ -249,8 +252,9 @@ void loop() {
         case MODE_FAIL:
             if (isNewSystem) {
                 Stop_Motors();
-                while(1);
+                isNewSystem = false;
             }
+            while(1);
             break;
     }
 }
@@ -293,7 +297,7 @@ Signal Horizontal_Move_Update() {
         Move_Horizontal();
         return KEEP;
     }
-    if (elapsedTime <= Move_Horizontal_Duration + Stop_Moving_Horizontal_Duration) {
+    if (elapsedTime <= Move_Horizontal_Duration + Move_Horizontal_Deceleration_Duration) {
         Stop_Moving_Horizontal ();
         if (Move_Horizontal_Speed == 0) {
             return NEXT;
@@ -371,31 +375,40 @@ void Climb_Enter() {
 }
 
 Signal Climb_Update() {
-        if (millis() - Scan_Time >= Scan_Interval) {
-            Scan_Time = millis();
+    if (millis() - Scan_Time >= Scan_Interval) {
+        Scan_Time = millis();
 
-            if (Read_Distance(Climb_Distance)) {
-                Scan_Fail_Count = 0;
+        if (Read_Distance(Climb_Distance)) {
+            Scan_Fail_Count = 0;
 
-                if (Climb_Distance < Climb_Target_Distance) {
+            if (Climb_Distance < Climb_Target_Distance) {
                 Constant_Climbing();
                 return KEEP;
-                }
-                if (Climb_Distance >= Climb_Target_Distance) {
-                Stop_Climbing();
-                return NEXT;
-                }
             }
-            else {
+
+            if (Climb_Distance >= Climb_Target_Distance) {
+                Stop_Climbing();
+                Climb_Retry_Count = 0;
+                return NEXT;
+            }
+        }
+        else {
             Stop_Climbing();
             Scan_Fail_Count++;
 
             if (Scan_Fail_Count >= Scan_Max_Fail_Count) {
                 Scan_Fail_Count = 0;
+                Climb_Retry_Count++;
+
+                if (Climb_Retry_Count >= Climb_Max_Retry_Count) {
+                    return FAIL;
+                }
+
                 return RETRY;
             }
         }
     }
+
     return KEEP;
 }
 
