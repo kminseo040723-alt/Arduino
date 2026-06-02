@@ -10,11 +10,17 @@ void setup() {
   pinMode(R_PWM_1, OUTPUT);
   pinMode(L_PWM_1, OUTPUT);
 
-  digitalWrite(R_EN_1, HIGH);
-  digitalWrite(L_EN_1, HIGH);
+  digitalWrite(R_EN_1, LOW);
+  digitalWrite(L_EN_1, LOW);
 }
 void loop() {
   analogWrite(R_PWM_1, 0);
   analogWrite(L_PWM_1, 150);
+  delay(1000);
+
+  analogWrite(R_PWM_1, 0);
+  analogWrite(L_PWM_1, 0);
+  digitalWrite(R_EN_1, LOW);
+  digitalWrite(L_EN_1, LOW);
   delay(1000);
 }
