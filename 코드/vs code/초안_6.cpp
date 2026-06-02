@@ -113,13 +113,13 @@ unsigned long Move_Horizontal_Change_Speed_Time;
 // 수직 이동
 const int Climb_Motor_Num = 2;
 const int Climb_Start_Speed = 50;
-const int Climb_Speed_Increment = 5;
 const int Climb_Speed_Decrement = 5;
 const int Climb_Intermediary_Speed = 180;
 const int Climb_Max_Speed = 255;
+const unsigned long Climb_Decel_Interval = 200;
 int Climb_Speed;
 int currentSpeed[Total_Motor_Num] = { 0, 0, 0 };
-unsigned long Climb_Time;
+unsigned long Climb_Decel_Time;
 
 // 수확
 const int Servo_Total_Rotations = 3;
@@ -137,6 +137,7 @@ unsigned long Servo_Change_Angle_Time;
 // VL53L0X 거리 센서
 Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 
+const int Climb_Intermediary_Target_Distance = 500;
 const int Climb_Target_Distance = 800;
 const int Scan_Max_Fail_Count = 10;
 const int Climb_Max_Retry_Count = 2;
@@ -369,8 +370,7 @@ void Climb_Enter() {
     Scan_Fail_Count = 0;
     Climb_Retry_Count = 0;
     Climb_Speed = 0;
-    Climb_Time = millis();
-
+    Climb_Decel_Time = millis();
     Scan_Time = millis() - Scan_Interval;
 }
 
@@ -381,8 +381,13 @@ Signal Climb_Update() {
         if (Read_Distance(Climb_Distance)) {
             Scan_Fail_Count = 0;
 
-            if (Climb_Distance < Climb_Target_Distance) {
+            if (Climb_Distance < Climb_Intermediary_Target_Distance) {
                 Constant_Climbing();
+                return KEEP;
+            }
+
+            if (Climb_Distance < Climb_Target_Distance) {
+                Decelerate_Climbing();
                 return KEEP;
             }
 
@@ -425,16 +430,31 @@ bool Read_Distance(int& Scan_distance) {
 }
 
 void Constant_Climbing() {
-    int speed = constrain(Climb_Intermediary_Speed, 0, Climb_Max_Speed);
+    int Climb_Speed = constrain(Climb_Intermediary_Speed, 0, Climb_Max_Speed);
 
     for (int i = 0; i < Climb_Motor_Num; i++) {
-        currentSpeed[i] = speed;
-        analogWrite(R_PWM[i], speed);
+        currentSpeed[i] = Climb_Speed;
+        analogWrite(R_PWM[i], Climb_Speed);
+        analogWrite(L_PWM[i], 0);
+    }
+}
+
+void Decelerate_Climbing() {
+    if (millis() - Climb_Decel_Time <= Climb_Decel_Interval) {
+    return;
+    }
+    Climb_Decel_Time = millis();
+    Climb_Speed = max(Climb_Speed - Climb_Speed_Decrement, 0);
+
+    for (int i = 0; i < Climb_Motor_Num; i++) {
+        currentSpeed[i] = Climb_Speed;
+        analogWrite(R_PWM[i], Climb_Speed);
         analogWrite(L_PWM[i], 0);
     }
 }
 
 void Stop_Climbing() {
+    if ()
     for (int i = 0; i < Climb_Motor_Num; i++) {
         analogWrite(R_PWM[i], 0);
         analogWrite(L_PWM[i], 0);
