@@ -11,6 +11,6 @@ void loop() {
   delay(1000);
 
   analogWrite(R_PWM_1, 0);
-  analogWrite(L_PWM_1, 0);-
+  analogWrite(L_PWM_1, 0);
   delay(1000);
 }

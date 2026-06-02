@@ -31,12 +31,12 @@ enum RobotState {
 };
 
 enum HarvestState {
-    Harvest_Foward,
+    Harvest_Forward,
     Harvest_Pause,
     Harvest_Reverse
 };
 
-HarvestState Harvest_State = Harvest_Foward;
+HarvestState Harvest_State = Harvest_Forward;
 struct StateConfig {
     RobotState state;
     void (*onEnter)();
@@ -129,20 +129,22 @@ int currentSpeed[Total_Motor_Num] = { 0, 0, 0 };
 unsigned long Climb_Decel_Time;
 
 // 수확
-const int Servo_Total_Rotations = 3;
-const int Servo_Initial_Angle = 10;
-const int Servo_Max_Angle = 170;
-const int Servo_Angle_Increment = 10;
-const int Servo_Angle_Decrement = 10;
+const int Harvest_Servo_Total_Rotations = 3;
+const int Harvest_Servo_Start_Angle = 0;
+const int Harvest_Servo_Max_Angle = 170;
+const int Harvest_Servo_Angle_Increment = 10;
+const int Harvest_Servo_Angle_Decrement = 10;
+
 const int Harvest_Climb_Speed = 100;
 const int Harvest_Pause_Angle = 90;
+
 const unsigned long Servo_1_Interval = 100;
 const unsigned long Servo_M1_Interval = 100;
 const unsigned long Harvest_Pause_Duration = 1000;
-int Servo_Angle = Servo_Initial_Angle;
+int Servo_Angle = Harvest_Servo_Start_Angle;
 int Servo_Rotation;
 int Servo_Direction = 1;
-unsigned long Servo_Change_Angle_Time;
+unsigned long Harvest_Start_Time;
 unsigned long Harvest_Pause_Time;
 
 // VL53L0X 거리 센서
