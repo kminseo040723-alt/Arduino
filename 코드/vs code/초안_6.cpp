@@ -30,6 +30,13 @@ enum RobotState {
     Harvest
 };
 
+enum HarvestState {
+    Harvest_Foward,
+    Harvest_Pause,
+    Harvest_Reverse
+};
+
+HarvestState Harvest_State = Harvest_Foward;
 struct StateConfig {
     RobotState state;
     void (*onEnter)();
@@ -127,12 +134,16 @@ const int Servo_Initial_Angle = 10;
 const int Servo_Max_Angle = 170;
 const int Servo_Angle_Increment = 10;
 const int Servo_Angle_Decrement = 10;
+const int Harvest_Climb_Speed = 100;
+const int Harvest_Pause_Angle = 90;
 const unsigned long Servo_1_Interval = 100;
 const unsigned long Servo_M1_Interval = 100;
+const unsigned long Harvest_Pause_Duration = 1000;
 int Servo_Angle = Servo_Initial_Angle;
 int Servo_Rotation;
 int Servo_Direction = 1;
 unsigned long Servo_Change_Angle_Time;
+unsigned long Harvest_Pause_Time;
 
 // VL53L0X 거리 센서
 Adafruit_VL53L0X lox = Adafruit_VL53L0X();
@@ -469,6 +480,10 @@ void Harvest_Enter() {
     Servo_Change_Angle_Time = millis() - Servo_1_Interval;
     Servo_Angle = Servo_Initial_Angle;
 
+    Harvest_State = Harvest_Climbing;
+    Harvest_Pause_Time = 0;
+
+    Scan_Time = millis() - Scan_Interval;
     Write_Servos(Servo_Angle);
 }
 
@@ -477,7 +492,27 @@ Signal Harvest_Update() {
         Stop_Servo_Motor();
         return NEXT;
     }
+    if (Harvest_State == Harvest_Climbing) {
+        if (millis() - Scan_Time >= Scan_Interval) {
+            Scan_Time = millis();
 
+            if (Read_Distance(Climb_Distance)) {
+                if (Climb_Distance < Climb_Target_Distance) {
+                    Harvest_Climb_Slowly();
+                } else {
+                    Stop_Climbing();
+                    Harvest_State = Harvest_Pausing;
+                    Harvest_Pause_Time = millis();
+                }
+            }
+        }
+    } else if (Harvest_State == Harvest_Pausing) {
+        Stop_Climbing();
+
+        if (millis() - Harvest_Pause_Time >= Harvest_Pause_Duration) {
+            Harvest_State = Harvest_Climbing;
+        }
+    }
     if (Servo_Direction == 1) {
         if (millis() - Servo_Change_Angle_Time >= Servo_1_Interval) {
             Servo_Change_Angle_Time = millis();
@@ -491,6 +526,16 @@ Signal Harvest_Update() {
     }
 
     return KEEP;
+}
+
+void Harvest_Climb_Slowly() {
+   int speed = constrain(Harvest_Climb_Speed, Climb_Min_Speed, Climb_Max_Speed);
+
+    for (int i = 0; i < Climb_Motor_Num; i++) {
+        currentSpeed[i] = speed;
+        analogWrite(R_PWM[i], speed);
+        analogWrite(L_PWM[i], 0);
+    }
 }
 
 void Write_Servos(int Target_Angle) {
