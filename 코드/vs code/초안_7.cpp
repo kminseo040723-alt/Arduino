@@ -587,7 +587,6 @@ bool Accelerate_Climbing_When_Distance_Decreases_Or_Holds(int distance) {
             Climb_Stall_Start_Time = millis();
             Climb_Stall_Base_Distance = distance;
             Climb_Trend = Climb_Trend_Normal;
-
         }
 
         Climb_Last_Distance = distance;
@@ -688,6 +687,7 @@ Signal Harvest_Update() {
             return RECLIMB;
         }
     }
+
     if (millis() - Harvest_Pause_Time < Harvest_Ready_Duration) {
         return KEEP;
     }
@@ -767,5 +767,3 @@ void Stop_Motors() {
     Stop_Climbing();
     Stop_Servo_Motor();
 }
-
-
