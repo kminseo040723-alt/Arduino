@@ -1,7 +1,11 @@
 #include <Adafruit_VL53L0X.h>
-#include <Servo.h>
-#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
 #include <Adafruit_Sensor.h>
+#include <Wire.h>
+
+#define SERVO_MIN_PULSE_WIDTH 650
+#define SERVO_MAX_PULSE_WIDTH 2350
+#define PCA_FREQUENCY 50
 
 enum SystemMode {
     MODE_IDLE,    
@@ -25,6 +29,7 @@ enum RobotState {
     Climb,    
     Harvest
 };
+
 struct StateConfig {
     RobotState state;
     void (*onEnter)();
@@ -62,22 +67,31 @@ int currentState_Index;
 bool isNewState = true;
 const unsigned long StartTime = 2000;
 
+//모터 핀 번호
 // HM0557 스텝모터
-const int STR = 8;
-const int DIR = 7;
+const int STR = 2;
+const int DIR = 1;
 
+// BTS7960 모터 드라이버
+const int R_PWM[] = { 5, 10,0 };
+const int L_PWM[] = { 6, 11,0 };
+
+const int Total_Motor_Num = 3;
+
+//PCA9685 모터 드라이버
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
+const int Servo_CH[] = {11, 10};
+
+const int Servo_Num = 2;
+//그리퍼 열기/닫기
 const int Steps_Per_Revolution_Open = 14400;
 const int Steps_Per_Revolution_Close = 14400;
 const int Step_Delay_Open = 1000;
 const int Step_Delay_Close = 1000;
 int gripperStep;
 
-// TB6612FNG 수평 이동 모터
-const int PWMA = 5;
-const int AIN1 = 3;
-const int AIN2 = 4;
-const int STBY = 9;
-
+//수평이동
+const int Motor_Horizontal = 2;
 const int Move_Horizontal_Start_Speed = 50;
 const int Move_Horizontal_Speed_Increment = 5;
 const int Move_Horizontal_Intermediary_Speed = 180;
@@ -89,13 +103,8 @@ int Move_Horizontal_Speed;
 unsigned long Move_Horizontal_Time;
 unsigned long Move_Horizontal_Change_Speed_Time;
 
-// BTS7960 수직 이동 모터 2개
-const int R_EN[] = { 8, 12 };
-const int L_EN[] = { 7, 13 };
-const int R_PWM[] = { 5, 10 };
-const int L_PWM[] = { 6, 11 };
-
-const int Motor_Num = 2;
+// 수직 이동
+const int Climb_Motor_Num = 2;
 
 const int Climb_Start_Speed = 50;
 const int Climb_Speed_Increment = 5;
@@ -103,16 +112,11 @@ const int Climb_Speed_Decrement = 5;
 const int Climb_Intermediary_Speed = 180;
 const int Climb_Max_Speed = 255;
 int Climb_Speed;
-int currentSpeed[Motor_Num] = { 0, 0 };
+int currentSpeed[Total_Motor_Num] = { 0, 0 ,0};
 unsigned long Climb_Time;
 
-// Servo 모터
-Servo servos[2];
 
-const int Servo_Pin[] = {11, 10};
-
-const int Servo_Num = 2;
-
+//수확
 const int Servo_Total_Rotations = 3;
 const int Servo_Initial_Angle = 10;
 const int Servo_Max_Angle = 170;
@@ -145,11 +149,12 @@ void Stop_Servo_Motor();
 void Move_Horizontal();
 void Stop_Moving_Horizontal();
 void Constant_Climbing();
-void Set_Motor_Speed(int motor, int Motor_Speed);
 bool Read_Distance(int& Scan_distance); 
+void Write_Servo_Angle(int channel, int angle);
 void Rotating_1();
 void Rotating_2();
 void Write_Servos(int Target_Angle);
+void Stop_Servo_Motor();
 
 void setup() {
     Serial.begin(115200);
@@ -158,33 +163,20 @@ void setup() {
     // 스텝모터
     pinMode(STR, OUTPUT);
     pinMode(DIR, OUTPUT);
-
-    // TB6612FNG
-    pinMode(STBY, OUTPUT);
-    pinMode(PWMA, OUTPUT);
-    pinMode(AIN1, OUTPUT);
-    pinMode(AIN2, OUTPUT);
     
-    digitalWrite(STBY, HIGH);
-
-    analogWrite(PWMA, 0);
+    //PCA9685
+    pwm.begin();
+    pwm.setPWMFreq(PCA_FREQUENCY);
     
+    Write_Servos(Servo_Initial_Angle);
+
     // BTS7960
-    for (int i = 0; i < Motor_Num; i++) {
-        pinMode(R_EN[i], OUTPUT);
-        pinMode(L_EN[i], OUTPUT);
+    for (int i = 0; i < Total_Motor_Num; i++) {
         pinMode(R_PWM[i], OUTPUT);
         pinMode(L_PWM[i], OUTPUT);
         
-        digitalWrite(R_EN[i], LOW);
-        digitalWrite(L_EN[i], LOW);
         analogWrite(R_PWM[i], 0);
         analogWrite(L_PWM[i], 0);
-    }
-    
-    // Servo 모터
-    for (int i = 0; i < Servo_Num; i++) {
-        servos[i].attach(Servo_Pin[i]);
     }
     
     // 거리 센서
@@ -287,8 +279,6 @@ void Horizontal_Move_Enter() {
     Move_Horizontal_Time = millis();
     Move_Horizontal_Change_Speed_Time = millis();
     Move_Horizontal_Speed = 0;
-    digitalWrite(AIN1, HIGH);
-    digitalWrite(AIN2, LOW);
 }
 
 Signal Horizontal_Move_Update() {
@@ -321,8 +311,11 @@ void Move_Horizontal() {
             Move_Horizontal_Speed =min(Move_Horizontal_Speed + Move_Horizontal_Speed_Increment, Move_Horizontal_Intermediary_Speed);
         }
     }
-    analogWrite(PWMA, Move_Horizontal_Speed);
+    currentSpeed[Motor_Horizontal] = Move_Horizontal_Speed;
+    analogWrite(R_PWM[Motor_Horizontal], Move_Horizontal_Speed);
+    analogWrite(L_PWM[Motor_Horizontal], 0);
 }
+
 
 void Stop_Moving_Horizontal () {
     if (millis() - Move_Horizontal_Change_Speed_Time >= Move_Horizontal_Deceleration_Interval) {
@@ -333,13 +326,16 @@ void Stop_Moving_Horizontal () {
             Stop_Horizontal_Motor();
         }
     }
-    analogWrite(PWMA, Move_Horizontal_Speed);
+    currentSpeed[Motor_Horizontal] = Move_Horizontal_Speed;
+    analogWrite(R_PWM[Motor_Horizontal], Move_Horizontal_Speed);
+    analogWrite(L_PWM[Motor_Horizontal], 0);
 }
 
 void Stop_Horizontal_Motor() {
-    analogWrite(PWMA, 0);
-    digitalWrite(AIN1, LOW);
-    digitalWrite(AIN2, LOW);
+    analogWrite(R_PWM[Motor_Horizontal], 0);
+    analogWrite(L_PWM[Motor_Horizontal], 0);
+
+    currentSpeed[Motor_Horizontal] = 0;
 }
 
 void Gripper_Close_Enter() {
@@ -367,11 +363,6 @@ void Climb_Enter() {
     Climb_Time = millis();
 
     Scan_Time = millis() - Scan_Interval;
-
-    for (int i = 0; i < Motor_Num; i++) {
-    digitalWrite(R_EN[i], HIGH);
-    digitalWrite(L_EN[i], HIGH);
-    }
 }
 
 Signal Climb_Update() {
@@ -427,47 +418,32 @@ bool Read_Distance(int& Scan_distance) {
     }
 }
 
-void Constant_Climbing() { //가속도, 위치에 따라 변하는 함수 추가 필요 
-    Climb_Speed = Climb_Intermediary_Speed;
+void Constant_Climbing() { 
+    int speed = constrain(Climb_Intermediary_Speed, 0, Climb_Max_Speed);
 
-    for (int i = 0; i < Motor_Num; i++) {
-    Set_Motor_Speed(i, Climb_Speed);
+    for (int i = 0; i < Climb_Motor_Num; i++) {
+        currentSpeed[i] = speed;
+        analogWrite(R_PWM[i], speed);
+        analogWrite(L_PWM[i], 0);
     }
 }
 
-void Set_Motor_Speed(int motor, int Motor_Speed) {
-    if (motor < 0 || motor >= Motor_Num) return;
-
-    Motor_Speed = constrain (Motor_Speed, 0, Climb_Max_Speed);
-    currentSpeed[motor] = Motor_Speed;
-
-    analogWrite(R_PWM[motor], currentSpeed[motor]);
-    analogWrite(L_PWM[motor], 0);
-}
-
 void Stop_Climbing() {
-    for (int i = 0; i < Motor_Num; i++) {
+    for (int i = 0; i < Climb_Motor_Num; i++) {
         analogWrite(R_PWM[i], 0);
         analogWrite(L_PWM[i], 0);
-
-        digitalWrite(R_EN[i], LOW);
-        digitalWrite(L_EN[i], LOW);
 
         currentSpeed[i] = 0;
     }
 }
 
 void Harvest_Enter() {
-    for (int i = 0; i < Servo_Num; i++) {
-    if(!servos[i].attached()) {
-        servos[i].attach(Servo_Pin[i]);
-        }
-    }
-
     Servo_Rotation = 0;
     Servo_Direction = 1;
     Servo_Change_Angle_Time = millis() - Servo_1_Interval;
     Servo_Angle = Servo_Initial_Angle;
+
+    Write_Servos(Servo_Angle);
 }
 
 Signal Harvest_Update() {
@@ -491,6 +467,18 @@ Signal Harvest_Update() {
     return KEEP;
 }
 
+void Write_Servos(int Target_Angle) {
+    for (int i = 0; i < Servo_Num; i++) {
+        Write_Servo_Angle(Servo_CH[i], Target_Angle);
+    }
+}
+
+void Write_Servo_Angle(int channel, int angle) {
+    int pulseLength = map(angle, 0, 180, SERVO_MIN_PULSE_WIDTH, SERVO_MAX_PULSE_WIDTH);
+    int pwmValue = pulseLength * PCA_FREQUENCY / 1000000.0 * 4096;
+    pwm.setPWM(channel, 0, pwmValue);
+}
+
 void Rotating_1() {
     if (Servo_Angle < Servo_Max_Angle) {
         Servo_Angle += Servo_Angle_Increment;
@@ -512,16 +500,10 @@ void Rotating_2() {
     Write_Servos(Servo_Angle);
 }
 
-void Write_Servos(int Target_Angle) {
-  for (int i = 0; i < Servo_Num; i++) {
-    servos[i].write(Target_Angle);
-  }
-}
-
 void Stop_Servo_Motor() {
     for (int i = 0; i < Servo_Num; i++) {
-        servos[i].detach();
-        }
+        pwm.setPWM(Servo_CH[i], 0, 0);
+    }
     Servo_Rotation = 0;
     Servo_Direction = 1;
 }
