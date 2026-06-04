@@ -46,6 +46,13 @@ enum Climb_Trend_State {
 
 Climb_Trend_State Climb_Trend = Climb_Trend_Normal;
 
+enum Climb_Phase_State {
+    Climb_Phase_Normal,
+    Climb_Phase_Grip,
+    Climb_Phase_Accel
+};
+
+Climb_Phase_State Climb_Phase = Climb_Phase_Normal;
 struct StateConfig {
     RobotState state;
     void (*onEnter)();
@@ -135,22 +142,27 @@ const int Climb_Speed_Decrement = 5;
 const int Climb_Min_Speed = 0;
 const int Climb_Intermediary_Speed = 180;
 const int Climb_Max_Speed = 255;
-const unsigned long Climb_Accel_Interval = 200;
 const unsigned long Climb_Decel_Interval = 200;
-const unsigned long Climb_Accel_Duration = 2000;
-const unsigned long Climb_Distance_Stall_Duration = 2000;
+
+const int Climb_Grip_Step_Increment = 4;
+const unsigned long Climb_Accel_Interval = 200;
+const unsigned long Climb_Distance_Decrease_Duration = 2000;
 const unsigned long Climb_Same_Position_Duration = 3000;
+const unsigned long Grip_Tighten_Duration = 1000;
+const unsigned long Re_Accel_Duration = 2000;
 const int Climb_Distance_Tolerance = 5;
-int Climb_Speed = 0;
-int currentSpeed[Total_Motor_Num] = { 0, 0, 0 };
 unsigned long Climb_Accel_Time;
 unsigned long Climb_Decel_Time;
 unsigned long Climb_Stall_Start_Time;
 unsigned long Climb_Accel_Start_Time;
-int Climb_Last_Distance = 0;
-int Climb_Stall_Base_Distance = 0;
+unsigned long Climb_Phase_Start_Time;
+unsigned long Last_Grip_Step_Time;
+int Climb_Speed;
+int currentSpeed[Total_Motor_Num] = { 0, 0, 0 };
+int Climb_Last_Distance;
+int Climb_Stall_Base_Distance;
+int Climb_Gripper_Step;
 bool Initial_Climb_Distance = false;
-bool Is_Accelerating = false;
 
 // Harvest
 const int Harvest_Servo_Total_Rotations = 3;
@@ -160,7 +172,7 @@ const int Harvest_Servo_Angle_Increment = 10;
 const int Harvest_Servo_Angle_Decrement = 10;
 
 const int Harvest_Climb_Speed = 40;
-const int Harvest_Reclimb_Distance_Drop = 30;
+const int Harvest_Reclimb_Distance_Drop = 300;
 
 const unsigned long Servo_1_Interval = 100;
 const unsigned long Servo_M1_Interval = 100;
@@ -197,6 +209,7 @@ void Reset_Climb_Distance_Trend();
 void Reset_Distance_Average();
 Scan_Distance_State Read_Averaged_Distance(int& Average_Distance);
 bool Accelerate_Climbing_When_Distance_Decreases_Or_Holds(int distance);
+void Stop_Climbing_Motor();
 void Harvest_Climb_Slowly();
 bool Read_Distance(int& Scan_distance);
 void Write_Servo_Angle(int channel, int angle);
@@ -390,7 +403,6 @@ void Move_Horizontal() {
 void Stop_Moving_Horizontal() {
     if (millis() - Move_Horizontal_Change_Speed_Time >= Move_Horizontal_Deceleration_Interval) {
         Move_Horizontal_Change_Speed_Time = millis();
-\
         Move_Horizontal_Speed = max(0, Move_Horizontal_Speed - Move_Horizontal_Speed_Increment);
 
         if (Move_Horizontal_Speed == 0) {
@@ -513,8 +525,9 @@ void Reset_Climb_Distance_Trend() {
     Climb_Stall_Base_Distance = 0;
     Climb_Stall_Start_Time = 0;
     Climb_Accel_Start_Time = 0;
-    Is_Accelerating = false;
+    Climb_Gripper_Step = 0;
     Climb_Trend = Climb_Trend_Normal;
+    Climb_Phase = Climb_Phase_Normal;
 }
 
 void Reset_Distance_Average() {
@@ -547,8 +560,102 @@ Scan_Distance_State Read_Averaged_Distance(int& Average_Distance) {
     }
 
     Average_Distance = Distance_Sum / Distance_Count_Times;
+    Serial.print("Average Distance: ");
+    Serial.println(Average_Distance);
+
     Reset_Distance_Average();
     return DISTANCE_READY;
+}
+
+bool Whether_Climb_Normal(int distance) {
+    bool decreasing = distance <= Climb_Last_Distance - Climb_Distance_Tolerance;
+    bool holding    = abs(distance - Climb_Stall_Base_Distance) <= Climb_Distance_Tolerance;
+
+    if (decreasing) {
+        if (Climb_Trend != Climb_Trend_Decreasing) {
+            Climb_Trend = Climb_Trend_Decreasing;
+            Climb_Stall_Start_Time = millis();
+            Climb_Stall_Base_Distance = distance;
+        }
+        Climb_Last_Distance = distance;
+
+        if (millis() - Climb_Stall_Start_Time >= Climb_Distance_Decrease_Duration) {
+            Climb_Phase = Climb_Phase_Grip;
+            Climb_Phase_Start_Time = millis();
+            Last_Grip_Step_Time = millis();
+            Climb_Gripper_Step = 0;
+            return true;
+        }
+        return false;
+    }
+
+    if (holding) {
+        if (Climb_Trend != Climb_Trend_Holding) {
+            Climb_Trend = Climb_Trend_Holding;
+            Climb_Stall_Start_Time = millis();
+            Climb_Stall_Base_Distance = distance;
+        }
+        Climb_Last_Distance = distance;
+
+        if (millis() - Climb_Stall_Start_Time >= Climb_Same_Position_Duration) {
+            Climb_Phase = Climb_Phase_Grip;
+            Climb_Phase_Start_Time = millis();
+            Last_Grip_Step_Time = millis();
+            Climb_Gripper_Step = 0;
+            return true;
+        }
+        return false;
+    }
+
+    Climb_Phase = Climb_Phase_Normal;
+    Climb_Trend = Climb_Trend_Normal;
+    Climb_Last_Distance = distance;
+    Climb_Stall_Base_Distance = distance;
+    Climb_Stall_Start_Time = millis();
+    return false;
+}
+
+void Climb_Grip() {
+    if (Climb_Gripper_Step == 0) {
+    Stop_Climbing_Motor();
+    digitalWrite(DIR, LOW);
+    }
+    if (millis() - Last_Grip_Step_Time >= 2) {
+        if(Climb_Gripper_Step < Climb_Grip_Step_Increment) {
+            Last_Grip_Step_Time = millis();
+            digitalWrite(STR, HIGH);
+            delayMicroseconds(10);
+            digitalWrite(STR, LOW);
+            Climb_Gripper_Step++;
+        }
+    } 
+
+    if (millis() - Climb_Phase_Start_Time >= Grip_Tighten_Duration) {
+        Climb_Phase = Climb_Phase_Accel;
+        Climb_Accel_Start_Time = millis();
+        Climb_Accel_Time = millis();
+        Climb_Speed = Climb_Intermediary_Speed;
+        Set_Climb_Motors(Climb_Speed);
+
+    }
+}
+
+bool Climb_Accel(int distance) {
+   if (millis() - Climb_Accel_Start_Time < Re_Accel_Duration) {
+        if (millis() - Climb_Accel_Time >= Climb_Accel_Interval) {
+            Climb_Accel_Time = millis();
+            Set_Climb_Motors(Climb_Speed + Climb_Speed_Increment);
+        }
+        return true;
+    }
+
+    Climb_Phase = Climb_Phase_Normal;
+    Climb_Trend = Climb_Trend_Normal;
+    Climb_Last_Distance = distance;
+    Climb_Stall_Base_Distance = distance;
+    Climb_Stall_Start_Time = millis();
+    Climb_Gripper_Step = 0;
+    return false;
 }
 
 bool Accelerate_Climbing_When_Distance_Decreases_Or_Holds(int distance) {
@@ -558,78 +665,20 @@ bool Accelerate_Climbing_When_Distance_Decreases_Or_Holds(int distance) {
         Climb_Stall_Base_Distance = distance;
         Climb_Stall_Start_Time = millis();
         Climb_Trend = Climb_Trend_Normal;
+        Climb_Phase = Climb_Phase_Normal;
         return false;
     }
 
-    bool Whether_Distance_Decreases = distance <= Climb_Last_Distance - Climb_Distance_Tolerance;
-    
-    if (Whether_Distance_Decreases) {
-        if(Climb_Trend != Climb_Trend_Decreasing) {
-            Climb_Trend = Climb_Trend_Decreasing;
-            Climb_Stall_Start_Time = millis();
-            Climb_Stall_Base_Distance = distance;
-        }
-        
-        if (!Is_Accelerating && millis() - Climb_Stall_Start_Time >= Climb_Distance_Stall_Duration) {
-        Is_Accelerating = true;
-        Climb_Accel_Start_Time = millis();
-        }
-
-        if (Is_Accelerating && millis() - Climb_Accel_Start_Time < Climb_Accel_Duration) {
-            if (millis() - Climb_Accel_Time >= Climb_Accel_Interval) {
-                Climb_Accel_Time = millis();
-                Set_Climb_Motors(Climb_Speed + Climb_Speed_Increment);
-            }
-        }
-        
-        if (Is_Accelerating && millis() - Climb_Accel_Start_Time >= Climb_Accel_Duration) {
-            Is_Accelerating = false;
-            Climb_Stall_Start_Time = millis();
-            Climb_Stall_Base_Distance = distance;
-            Climb_Trend = Climb_Trend_Normal;
-        }
-
-        Climb_Last_Distance = distance;
+    if (Climb_Phase == Climb_Phase_Grip) {
+        Climb_Grip();
         return true;
     }
 
-    bool Whether_Distance_Holds = abs(distance - Climb_Stall_Base_Distance) <= Climb_Distance_Tolerance;
-
-    if (Whether_Distance_Holds) {
-        if(Climb_Trend != Climb_Trend_Holding) {
-            Climb_Trend = Climb_Trend_Holding;
-            Climb_Stall_Start_Time = millis();
-            Climb_Stall_Base_Distance = distance;
-        }
-
-        if (!Is_Accelerating && millis() - Climb_Stall_Start_Time >= Climb_Same_Position_Duration) {
-            Is_Accelerating = true;
-            Climb_Accel_Start_Time = millis();
-        }
-
-        if (Is_Accelerating &&millis() - Climb_Accel_Start_Time < Climb_Accel_Duration){
-            if(millis() - Climb_Accel_Time >= Climb_Accel_Interval) {
-            Climb_Accel_Time = millis();
-            Set_Climb_Motors(Climb_Speed + Climb_Speed_Increment);
-
-            }   
-        }
-
-        if (Is_Accelerating && millis() - Climb_Accel_Start_Time >= Climb_Accel_Duration) {
-            Is_Accelerating = false;
-            Climb_Stall_Start_Time = millis(); 
-            Climb_Stall_Base_Distance = distance;
-            Climb_Trend = Climb_Trend_Normal;
-        }
-        Climb_Last_Distance = distance;
-        return true;
+    if (Climb_Phase == Climb_Phase_Accel) {
+        return Climb_Accel(distance);
     }
 
-    Climb_Trend = Climb_Trend_Normal;
-    Climb_Last_Distance = distance;
-    Climb_Stall_Base_Distance = distance;
-    Climb_Stall_Start_Time = millis();
-    return false;
+    return Whether_Climb_Normal(distance);
 }
 
 void Constant_Climbing() {
@@ -646,7 +695,12 @@ void Decelerate_Climbing() {
 }
 
 void Stop_Climbing() {
-    for (int i = 0; i < Climb_Motor_Num; i++) {
+    Stop_Climbing_Motor();
+    Reset_Climb_Distance_Trend();
+}
+
+void Stop_Climbing_Motor() {
+     for (int i = 0; i < Climb_Motor_Num; i++) {
         analogWrite(R_PWM[i], 0);
         analogWrite(L_PWM[i], 0);
 
@@ -654,7 +708,6 @@ void Stop_Climbing() {
     }
 
     Climb_Speed = 0;
-    Reset_Climb_Distance_Trend();
 }
 
 void Harvest_Enter() {
@@ -764,6 +817,6 @@ void Stop_Harvest_Climb_Motor() {
 void Stop_Motors() {
     Stop_Gripper_Motor();
     Stop_Horizontal_Motor();
-    Stop_Climbing();
+    Stop_Climbing_Motor();
     Stop_Servo_Motor();
 }
