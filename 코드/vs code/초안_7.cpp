@@ -83,10 +83,10 @@ void Stop_Motors();
 
 struct StateConfig stateConfigs[] = {
     { Gripper_Open, Gripper_Open_Enter, Gripper_Open_Update, Stop_Gripper_Motor },
-    { Horizontal_Move, Horizontal_Move_Enter, Horizontal_Move_Update, Stop_Horizontal_Motor },
+    // { Horizontal_Move, Horizontal_Move_Enter, Horizontal_Move_Update, Stop_Horizontal_Motor },
     { Gripper_Close, Gripper_Close_Enter, Gripper_Close_Update, Stop_Gripper_Motor },
-    { Climb, Climb_Enter, Climb_Update, Stop_Climbing },
-    { Harvest, Harvest_Enter, Harvest_Update, Stop_Harvest_Climb_Motor }
+    // { Climb, Climb_Enter, Climb_Update, Stop_Climbing },
+    // { Harvest, Harvest_Enter, Harvest_Update, Stop_Harvest_Climb_Motor }
 };
 
 int System_Fail_Count = 0;
@@ -135,6 +135,7 @@ unsigned long Move_Horizontal_Time;
 unsigned long Move_Horizontal_Change_Speed_Time;
 
 // Vertical movement
+
 const int Climb_Motor_Num = 2;
 const int Climb_Start_Speed = 50;
 const int Climb_Speed_Increment = 5;
@@ -144,7 +145,7 @@ const int Climb_Intermediary_Speed = 180;
 const int Climb_Max_Speed = 255;
 const unsigned long Climb_Decel_Interval = 200;
 
-const int Climb_Grip_Step_Increment = 4;
+const int Climb_Grip_Step_Increment = 500;
 const unsigned long Climb_Accel_Interval = 200;
 const unsigned long Climb_Distance_Decrease_Duration = 2000;
 const unsigned long Climb_Same_Position_Duration = 3000;
@@ -195,10 +196,11 @@ const unsigned long Distance_Average_Duration = 500;
 int Climb_Distance = 0;
 int Scan_Fail_Count = 0;
 int Climb_Retry_Count = 0;
+int Distance_Count_Times = 0;
 unsigned long Scan_Time;
 unsigned long Distance_Average_Start_Time;
 unsigned long Distance_Sum = 0;
-int Distance_Count_Times = 0;
+bool Sensor_Enabled = false;
 
 void Move_Horizontal();
 void Stop_Moving_Horizontal();
@@ -238,8 +240,10 @@ void setup() {
     }
 
     if (!lox.begin()) {
-        Serial.println("VL53L0X not found");
-        while (1);
+        if (Sensor_Enabled) {
+            Serial.println("VL53L0X not found");
+            while (1);
+        }
     }
 }
 
@@ -262,6 +266,12 @@ void loop() {
 
         case MODE_RUNNING:
             if (isNewState) {
+
+                Serial.print("\n=== ENTER STATE : ");
+                Serial.print(currentState_Index);
+                Serial.print(" (");
+                Serial.println(") ===");   
+
                 if (stateConfigs[currentState_Index].onEnter != nullptr) {
                     stateConfigs[currentState_Index].onEnter();
                 }
@@ -276,6 +286,7 @@ void loop() {
             }
 
             if (nextSignal == NEXT) {
+                    Serial.print("Signal : NEXT ");
                 if (stateConfigs[currentState_Index].onExit != nullptr) {
                     stateConfigs[currentState_Index].onExit();
                 }
@@ -289,14 +300,19 @@ void loop() {
                     isNewState = true;
                 }
             } else if (nextSignal == RECLIMB) {
+                Serial.println("Signal : RECLIMB");
+                
                 if (stateConfigs[currentState_Index].onExit != nullptr) {
                     stateConfigs[currentState_Index].onExit();
                 }
                 currentState_Index = Climb_State_Index;
                 isNewState = true;
             } else if (nextSignal == RETRY) {
+                Serial.println("Signal : RETRY");
                 isNewState = true;
             } else if (nextSignal == FAIL) {
+                Serial.println("Signal : FAIL");
+               
                 if (stateConfigs[currentState_Index].onExit != nullptr) {
                     stateConfigs[currentState_Index].onExit();
                 }
@@ -450,6 +466,11 @@ void Climb_Enter() {
 }
 
 Signal Climb_Update() {
+    if (!Sensor_Enabled) {
+    Constant_Climbing();
+    return KEEP;
+    }
+
     Scan_Distance_State Distance_Result = Read_Averaged_Distance(Climb_Distance);
 
     if (Distance_Result == DISTANCE_WAITING) {
@@ -653,6 +674,7 @@ bool Climb_Accel(int distance) {
     Climb_Trend = Climb_Trend_Normal;
     Climb_Last_Distance = distance;
     Climb_Stall_Base_Distance = distance;
+    Climb_Decel_Time = millis();
     Climb_Stall_Start_Time = millis();
     Climb_Gripper_Step = 0;
     return false;
