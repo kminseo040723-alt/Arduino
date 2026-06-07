@@ -1,4 +1,4 @@
-﻿#include <Adafruit_VL53L0X.h>
+#include <Adafruit_VL53L0X.h>
 #include <Adafruit_PWMServoDriver.h>
 #include <Adafruit_Sensor.h>
 #include <Wire.h>
@@ -27,6 +27,7 @@ enum Signal {
 enum RobotState {
     Gripper_Open,
     Horizontal_Move,
+    Horizontal_Move_Reverse,
     Gripper_Close,
     Climb,
     Harvest
@@ -68,6 +69,9 @@ void Horizontal_Move_Enter();
 Signal Horizontal_Move_Update();
 void Stop_Horizontal_Motor();
 
+void Horizontal_Move_Reverse_Enter();
+Signal Horizontal_Move_Reverse_Update();
+
 void Gripper_Close_Enter();
 Signal Gripper_Close_Update();
 
@@ -82,10 +86,11 @@ void Stop_Harvest_Climb_Motor();
 void Stop_Motors();
 
 struct StateConfig stateConfigs[] = {
-    { Gripper_Open, Gripper_Open_Enter, Gripper_Open_Update, Stop_Gripper_Motor },
+    // { Gripper_Open, Gripper_Open_Enter, Gripper_Open_Update, Stop_Gripper_Motor },
     // { Horizontal_Move, Horizontal_Move_Enter, Horizontal_Move_Update, Stop_Horizontal_Motor },
-    { Gripper_Close, Gripper_Close_Enter, Gripper_Close_Update, Stop_Gripper_Motor },
-    // { Climb, Climb_Enter, Climb_Update, Stop_Climbing },
+    // {Horizontal_Move_Reverse, Horizontal_Move_Reverse_Enter, Horizontal_Move_Reverse_Update, Stop_Horizontal_Motor},
+    // { Gripper_Close, Gripper_Close_Enter, Gripper_Close_Update, Stop_Gripper_Motor },
+    { Climb, Climb_Enter, Climb_Update, Stop_Climbing },
     // { Harvest, Harvest_Enter, Harvest_Update, Stop_Harvest_Climb_Motor }
 };
 
@@ -95,12 +100,12 @@ unsigned long System_Start_Time;
 bool isNewSystem = true;
 int currentState_Index = 0;
 bool isNewState = true;
-const unsigned long StartTime = 2000;
+const unsigned long StartTime = 1000;
 const int Climb_State_Index = 3;
 
 // HM0557 stepper motor
-const int STR = 8;
-const int DIR = 7;
+const int STR = 7;
+const int DIR = 8;
 
 // BTS7960 motor driver
 const int R_PWM[] = { 3, 6, 10 };
@@ -115,55 +120,39 @@ const int Servo_CH[] = { 4, 5, 6, 7};
 const int Servo_Num = 4;
 
 // Gripper open/close
-const int Steps_Per_Revolution_Open = 14400;
-const int Steps_Per_Revolution_Close = 30000;
-const int Step_Delay_Open = 200;
-const int Step_Delay_Close = 200;
-int gripperStep = 0;
+const unsigned long Steps_Per_Revolution_Open = 17000;
+const unsigned long Steps_Per_Revolution_Close = 20000;
+const int Step_Delay_Open = 100;
+const int Step_Delay_Close = 50;
+unsigned long gripperStep = 0;
 
 // Horizontal movement
 const int Motor_Horizontal = 2;
-const int Move_Horizontal_Start_Speed = 50;
-const int Move_Horizontal_Speed_Increment = 5;
-const int Move_Horizontal_Intermediary_Speed = 180;
-const unsigned long Move_Horizontal_Acceleration_Interval = 200;
-const unsigned long Move_Horizontal_Deceleration_Interval = 200;
-const unsigned long Move_Horizontal_Duration = 3000;
-const unsigned long Move_Horizontal_Deceleration_Duration = 4000;
-int Move_Horizontal_Speed = 0;
+const int Move_Horizontal_Speed = 180;
+const int Move_Horizontal_Reverse_Speed = 100;
+const unsigned long Move_Horizontal_Duration = 10000;
+const unsigned long Move_Horizontal_Reverse_Interval = 1000;
 unsigned long Move_Horizontal_Time;
-unsigned long Move_Horizontal_Change_Speed_Time;
+unsigned long Move_Horizontal_Reverse_Time;
 
 // Vertical movement
 
 const int Climb_Motor_Num = 2;
 const int Climb_Start_Speed = 50;
-const int Climb_Speed_Increment = 5;
 const int Climb_Speed_Decrement = 5;
 const int Climb_Min_Speed = 0;
 const int Climb_Intermediary_Speed = 180;
 const int Climb_Max_Speed = 255;
+
+const unsigned long Climb_Const_Time = 20000;
+const unsigned long Climb_Distance_Decrease_Duration = 2000;
 const unsigned long Climb_Decel_Interval = 200;
 
-const int Climb_Grip_Step_Increment = 500;
-const unsigned long Climb_Accel_Interval = 200;
-const unsigned long Climb_Distance_Decrease_Duration = 2000;
-const unsigned long Climb_Same_Position_Duration = 3000;
-const unsigned long Grip_Tighten_Duration = 1000;
-const unsigned long Re_Accel_Duration = 2000;
-const int Climb_Distance_Tolerance = 5;
-unsigned long Climb_Accel_Time;
+unsigned long Climb_Start_Time;
 unsigned long Climb_Decel_Time;
-unsigned long Climb_Stall_Start_Time;
-unsigned long Climb_Accel_Start_Time;
-unsigned long Climb_Phase_Start_Time;
-unsigned long Last_Grip_Step_Time;
 int Climb_Speed;
 int currentSpeed[Total_Motor_Num] = { 0, 0, 0 };
-int Climb_Last_Distance;
-int Climb_Stall_Base_Distance;
 int Climb_Gripper_Step;
-bool Initial_Climb_Distance = false;
 
 // Harvest
 const int Harvest_Servo_Total_Rotations = 3;
@@ -184,36 +173,14 @@ int Servo_Direction = 1;
 unsigned long Servo_Change_Angle_Time;
 unsigned long Harvest_Pause_Time;
 
-// VL53L0X distance sensor
-Adafruit_VL53L0X lox = Adafruit_VL53L0X();
-
-const int Climb_Intermediary_Target_Distance = 500;
-const int Climb_Target_Distance = 800;
-const int Scan_Max_Fail_Count = 10;
-const int Climb_Max_Retry_Count = 2;
-const unsigned long Scan_Interval = 20;
-const unsigned long Distance_Average_Duration = 500;
-int Climb_Distance = 0;
-int Scan_Fail_Count = 0;
-int Climb_Retry_Count = 0;
-int Distance_Count_Times = 0;
-unsigned long Scan_Time;
-unsigned long Distance_Average_Start_Time;
-unsigned long Distance_Sum = 0;
-bool Sensor_Enabled = false;
-
 void Move_Horizontal();
-void Stop_Moving_Horizontal();
+void Move_Horizontal_Reverse();
+
 void Constant_Climbing();
 void Decelerate_Climbing();
 void Set_Climb_Motors(int speed);
-void Reset_Climb_Distance_Trend();
-void Reset_Distance_Average();
-Scan_Distance_State Read_Averaged_Distance(int& Average_Distance);
-bool Accelerate_Climbing_When_Distance_Decreases_Or_Holds(int distance);
 void Stop_Climbing_Motor();
 void Harvest_Climb_Slowly();
-bool Read_Distance(int& Scan_distance);
 void Write_Servo_Angle(int channel, int angle);
 void Rotating_1();
 void Rotating_2();
@@ -237,13 +204,6 @@ void setup() {
 
         analogWrite(R_PWM[i], 0);
         analogWrite(L_PWM[i], 0);
-    }
-
-    if (!lox.begin()) {
-        if (Sensor_Enabled) {
-            Serial.println("VL53L0X not found");
-            while (1);
-        }
     }
 }
 
@@ -353,7 +313,11 @@ void Gripper_Open_Enter() {
 }
 
 Signal Gripper_Open_Update() {
-    if (gripperStep < Steps_Per_Revolution_Open) {
+    unsigned long Gripper_Open_Target_Step;
+
+    Calculate_Motor_Step (Gripper_Open_Target_Step);
+
+    if (gripperStep < Gripper_Open_Target_Step){
         digitalWrite(STR, HIGH);
         delayMicroseconds(Step_Delay_Open);
         digitalWrite(STR, LOW);
@@ -373,61 +337,42 @@ void Stop_Gripper_Motor() {
 
 void Horizontal_Move_Enter() {
     Move_Horizontal_Time = millis();
-    Move_Horizontal_Change_Speed_Time = millis();
-    Move_Horizontal_Speed = 0;
+    Move_Horizontal();
 }
 
 Signal Horizontal_Move_Update() {
     unsigned long elapsedTime = millis() - Move_Horizontal_Time;
 
     if (elapsedTime <= Move_Horizontal_Duration) {
-        Move_Horizontal();
-        return KEEP;
-    }
-
-    if (elapsedTime <= Move_Horizontal_Duration + Move_Horizontal_Deceleration_Duration) {
-        Stop_Moving_Horizontal();
-
-        if (Move_Horizontal_Speed == 0) {
-            return NEXT;
-        }
-
         return KEEP;
     }
     return NEXT;
 }
 
 void Move_Horizontal() {
-    if (millis() - Move_Horizontal_Change_Speed_Time >= Move_Horizontal_Acceleration_Interval) {
-        Move_Horizontal_Change_Speed_Time = millis();
-
-        if (Move_Horizontal_Speed == 0) {
-            Move_Horizontal_Speed = Move_Horizontal_Start_Speed;
-        } else {
-            Move_Horizontal_Speed = min(
-                Move_Horizontal_Speed + Move_Horizontal_Speed_Increment,
-                Move_Horizontal_Intermediary_Speed
-            );
-        }
-    }
-
     currentSpeed[Motor_Horizontal] = Move_Horizontal_Speed;
-    analogWrite(R_PWM[Motor_Horizontal], Move_Horizontal_Speed);
+    analogWrite(R_PWM[Motor_Horizontal], currentSpeed[Motor_Horizontal]);
     analogWrite(L_PWM[Motor_Horizontal], 0);
 }
 
-void Stop_Moving_Horizontal() {
-    if (millis() - Move_Horizontal_Change_Speed_Time >= Move_Horizontal_Deceleration_Interval) {
-        Move_Horizontal_Change_Speed_Time = millis();
-        Move_Horizontal_Speed = max(0, Move_Horizontal_Speed - Move_Horizontal_Speed_Increment);
+void Horizontal_Move_Reverse_Enter() {
+    Move_Horizontal_Reverse_Time = millis();
+    Move_Horizontal_Reverse();
+}
 
-        if (Move_Horizontal_Speed == 0) {
-            Stop_Horizontal_Motor();
-        }
+Signal Horizontal_Move_Reverse_Update() {
+    unsigned long elapsedTime = millis() - Move_Horizontal_Reverse_Time;
+
+    if (elapsedTime <= Move_Horizontal_Reverse_Interval) {
+        return KEEP;
     }
-    currentSpeed[Motor_Horizontal] = Move_Horizontal_Speed;
-    analogWrite(R_PWM[Motor_Horizontal], Move_Horizontal_Speed);
-    analogWrite(L_PWM[Motor_Horizontal], 0);
+    return NEXT;
+}
+
+void Move_Horizontal_Reverse() {
+    currentSpeed[Motor_Horizontal] = Move_Horizontal_Reverse_Speed;
+    analogWrite(R_PWM[Motor_Horizontal], 0);
+    analogWrite(L_PWM[Motor_Horizontal], currentSpeed[Motor_Horizontal]);
 }
 
 void Stop_Horizontal_Motor() {
@@ -435,7 +380,12 @@ void Stop_Horizontal_Motor() {
     analogWrite(L_PWM[Motor_Horizontal], 0);
 
     currentSpeed[Motor_Horizontal] = 0;
+       for (int i = 0; i < Climb_Motor_Num; i++) {
+        analogWrite(R_PWM[i], 0);
+        analogWrite(L_PWM[i], 0);
+    }
 }
+
 
 void Gripper_Close_Enter() {
     gripperStep = 0;
@@ -443,7 +393,11 @@ void Gripper_Close_Enter() {
 }
 
 Signal Gripper_Close_Update() {
-    if (gripperStep < Steps_Per_Revolution_Close) {
+    unsigned long Gripper_Close_Target_Step;
+
+    Calculate_Motor_Step (Gripper_Close_Target_Step);
+
+    if (gripperStep < Gripper_Close_Target_Step) {
         digitalWrite(STR, HIGH);
         delayMicroseconds(Step_Delay_Close);
         digitalWrite(STR, LOW);
@@ -455,253 +409,47 @@ Signal Gripper_Close_Update() {
     return KEEP;
 }
 
+void Calculate_Motor_Step (unsigned long &Step) {
+    RobotState currentState = stateConfigs[currentState_Index].state;
+
+    if (currentState==Gripper_Open) {
+        Step = Steps_Per_Revolution_Open;
+    } else if (currentState==Gripper_Close) {
+        Step = Steps_Per_Revolution_Close;
+    } else if (currentState==Climb) {
+        Step = Climb_Step_Speed;
+    }
+}
 void Climb_Enter() {
-    Scan_Fail_Count = 0;
-    Climb_Speed = Climb_Start_Speed;
-    Climb_Accel_Time = millis();
+    Climb_Start_Time = millis();
+
+    Climb_Speed = Climb_Intermediary_Speed;
     Climb_Decel_Time = millis();
-    Scan_Time = millis() - Scan_Interval;
-    Reset_Climb_Distance_Trend();
-    Reset_Distance_Average();
+
+    Set_Climb_Motors(Climb_Speed);
 }
 
 Signal Climb_Update() {
-    if (!Sensor_Enabled) {
-    Constant_Climbing();
-    return KEEP;
-    }
+    unsigned long elapsed =
+        millis() - Climb_Start_Time;
 
-    Scan_Distance_State Distance_Result = Read_Averaged_Distance(Climb_Distance);
-
-    if (Distance_Result == DISTANCE_WAITING) {
+    if (elapsed < Climb_Const_Time) {
+        Constant_Climbing();
         return KEEP;
     }
 
-    if (Distance_Result == DISTANCE_READY) {
-        if (Climb_Distance >= Climb_Target_Distance) {
-            Climb_Retry_Count = 0;
-            return NEXT;
-        }
-        Scan_Fail_Count = 0;
-        bool Should_Accelerate_Climbing = Accelerate_Climbing_When_Distance_Decreases_Or_Holds(Climb_Distance);
-        
-        if(Should_Accelerate_Climbing) {
-            return KEEP;
-        }
+    if (elapsed <
+        Climb_Constant_Time +
+        Climb_Distance_Decrease_Duration) {
 
-        if (Climb_Distance < Climb_Intermediary_Target_Distance) {
-            Constant_Climbing();
-            return KEEP;
-        }
-
-        if (Climb_Distance < Climb_Target_Distance) {
-            Decelerate_Climbing();
-            return KEEP;
-        }
-    }
-    if (Distance_Result == DISTANCE_FAILED) {
-        Scan_Fail_Count++;
-    
-        if (Scan_Fail_Count >= Scan_Max_Fail_Count) {
-            Scan_Fail_Count = 0;
-            Climb_Retry_Count++;
-    
-            if (Climb_Retry_Count >= Climb_Max_Retry_Count) {
-                return FAIL;
-            }
-            Stop_Climbing();
-            return RETRY;
-        }
+        Decelerate_Climbing();
+        return KEEP;
     }
 
-    return KEEP;
+    Stop_Climbing();
+    return NEXT;
 }
 
-bool Read_Distance(int& Scan_distance) {
-    VL53L0X_RangingMeasurementData_t measure;
-    lox.rangingTest(&measure, false);
-
-    if (measure.RangeStatus != 4) {
-        Scan_distance = measure.RangeMilliMeter;
-        return true;
-    }
-
-    Serial.println("Sensor error");
-    return false;
-}
-
-void Set_Climb_Motors(int speed) {
-    Climb_Speed = constrain(speed, Climb_Min_Speed, Climb_Max_Speed);
-
-    for (int i = 0; i < Climb_Motor_Num; i++) {
-        currentSpeed[i] = Climb_Speed;
-        analogWrite(R_PWM[i], Climb_Speed);
-        analogWrite(L_PWM[i], 0);
-    }
-}
-
-void Reset_Climb_Distance_Trend() {
-    Initial_Climb_Distance = false;
-    Climb_Last_Distance = 0;
-    Climb_Stall_Base_Distance = 0;
-    Climb_Stall_Start_Time = 0;
-    Climb_Accel_Start_Time = 0;
-    Climb_Gripper_Step = 0;
-    Climb_Trend = Climb_Trend_Normal;
-    Climb_Phase = Climb_Phase_Normal;
-}
-
-void Reset_Distance_Average() {
-    Scan_Time = millis() - Scan_Interval;
-    Distance_Average_Start_Time = millis();
-    Distance_Sum = 0;
-    Distance_Count_Times = 0;
-}
-
-Scan_Distance_State Read_Averaged_Distance(int& Average_Distance) {
-    if (millis() - Scan_Time < Scan_Interval) {
-        return DISTANCE_WAITING;
-    }
-
-    Scan_Time = millis();
-
-    int distance = 0;
-    if (Read_Distance(distance)) {
-        Distance_Sum += distance;
-        Distance_Count_Times++;
-    }
-
-    if (millis() - Distance_Average_Start_Time < Distance_Average_Duration) {
-        return DISTANCE_WAITING;
-    }
-
-    if (Distance_Count_Times == 0) {
-        Reset_Distance_Average();
-        return DISTANCE_FAILED;
-    }
-
-    Average_Distance = Distance_Sum / Distance_Count_Times;
-    Serial.print("Average Distance: ");
-    Serial.println(Average_Distance);
-
-    Reset_Distance_Average();
-    return DISTANCE_READY;
-}
-
-bool Whether_Climb_Normal(int distance) {
-    bool decreasing = distance <= Climb_Last_Distance - Climb_Distance_Tolerance;
-    bool holding    = abs(distance - Climb_Stall_Base_Distance) <= Climb_Distance_Tolerance;
-
-    if (decreasing) {
-        if (Climb_Trend != Climb_Trend_Decreasing) {
-            Climb_Trend = Climb_Trend_Decreasing;
-            Climb_Stall_Start_Time = millis();
-            Climb_Stall_Base_Distance = distance;
-        }
-        Climb_Last_Distance = distance;
-
-        if (millis() - Climb_Stall_Start_Time >= Climb_Distance_Decrease_Duration) {
-            Climb_Phase = Climb_Phase_Grip;
-            Climb_Phase_Start_Time = millis();
-            Last_Grip_Step_Time = millis();
-            Climb_Gripper_Step = 0;
-            return true;
-        }
-        return false;
-    }
-
-    if (holding) {
-        if (Climb_Trend != Climb_Trend_Holding) {
-            Climb_Trend = Climb_Trend_Holding;
-            Climb_Stall_Start_Time = millis();
-            Climb_Stall_Base_Distance = distance;
-        }
-        Climb_Last_Distance = distance;
-
-        if (millis() - Climb_Stall_Start_Time >= Climb_Same_Position_Duration) {
-            Climb_Phase = Climb_Phase_Grip;
-            Climb_Phase_Start_Time = millis();
-            Last_Grip_Step_Time = millis();
-            Climb_Gripper_Step = 0;
-            return true;
-        }
-        return false;
-    }
-
-    Climb_Phase = Climb_Phase_Normal;
-    Climb_Trend = Climb_Trend_Normal;
-    Climb_Last_Distance = distance;
-    Climb_Stall_Base_Distance = distance;
-    Climb_Stall_Start_Time = millis();
-    return false;
-}
-
-void Climb_Grip() {
-    if (Climb_Gripper_Step == 0) {
-    Stop_Climbing_Motor();
-    digitalWrite(DIR, LOW);
-    }
-    if (millis() - Last_Grip_Step_Time >= 2) {
-        if(Climb_Gripper_Step < Climb_Grip_Step_Increment) {
-            Last_Grip_Step_Time = millis();
-            digitalWrite(STR, HIGH);
-            delayMicroseconds(10);
-            digitalWrite(STR, LOW);
-            Climb_Gripper_Step++;
-        }
-    } 
-
-    if (millis() - Climb_Phase_Start_Time >= Grip_Tighten_Duration) {
-        Climb_Phase = Climb_Phase_Accel;
-        Climb_Accel_Start_Time = millis();
-        Climb_Accel_Time = millis();
-        Climb_Speed = Climb_Intermediary_Speed;
-        Set_Climb_Motors(Climb_Speed);
-
-    }
-}
-
-bool Climb_Accel(int distance) {
-   if (millis() - Climb_Accel_Start_Time < Re_Accel_Duration) {
-        if (millis() - Climb_Accel_Time >= Climb_Accel_Interval) {
-            Climb_Accel_Time = millis();
-            Set_Climb_Motors(Climb_Speed + Climb_Speed_Increment);
-        }
-        return true;
-    }
-
-    Climb_Phase = Climb_Phase_Normal;
-    Climb_Trend = Climb_Trend_Normal;
-    Climb_Last_Distance = distance;
-    Climb_Stall_Base_Distance = distance;
-    Climb_Decel_Time = millis();
-    Climb_Stall_Start_Time = millis();
-    Climb_Gripper_Step = 0;
-    return false;
-}
-
-bool Accelerate_Climbing_When_Distance_Decreases_Or_Holds(int distance) {
-    if (!Initial_Climb_Distance) {
-        Initial_Climb_Distance = true;
-        Climb_Last_Distance = distance;
-        Climb_Stall_Base_Distance = distance;
-        Climb_Stall_Start_Time = millis();
-        Climb_Trend = Climb_Trend_Normal;
-        Climb_Phase = Climb_Phase_Normal;
-        return false;
-    }
-
-    if (Climb_Phase == Climb_Phase_Grip) {
-        Climb_Grip();
-        return true;
-    }
-
-    if (Climb_Phase == Climb_Phase_Accel) {
-        return Climb_Accel(distance);
-    }
-
-    return Whether_Climb_Normal(distance);
-}
 
 void Constant_Climbing() {
     Set_Climb_Motors(Climb_Intermediary_Speed);
@@ -711,14 +459,22 @@ void Decelerate_Climbing() {
     if (millis() - Climb_Decel_Time < Climb_Decel_Interval) {
         return;
     }
-
     Climb_Decel_Time = millis();
     Set_Climb_Motors(Climb_Speed - Climb_Speed_Decrement);
 }
 
+void Set_Climb_Motors(int speed) {
+    Climb_Speed = constrain(speed, Climb_Min_Speed, Climb_Max_Speed);
+
+    for (int i = 0; i < Climb_Motor_Num; i++) {
+        currentSpeed[i] = Climb_Speed;
+        analogWrite(R_PWM[i], 0);
+        analogWrite(L_PWM[i], Climb_Speed);
+    }
+}
+
 void Stop_Climbing() {
     Stop_Climbing_Motor();
-    Reset_Climb_Distance_Trend();
 }
 
 void Stop_Climbing_Motor() {
@@ -741,10 +497,6 @@ void Harvest_Enter() {
     Harvest_Pause_Time = millis();
 
     Climb_Speed = Harvest_Climb_Speed;
-    Climb_Accel_Time = millis();
-    Scan_Time = millis() - Scan_Interval;
-    Reset_Climb_Distance_Trend();
-    Reset_Distance_Average();
     Write_Servos(Servo_Angle);
 }
 
@@ -755,8 +507,6 @@ Signal Harvest_Update() {
 
     Harvest_Climb_Slowly();
    
-    Scan_Distance_State Distance_Result = Read_Averaged_Distance(Climb_Distance);
-
     if (Distance_Result == DISTANCE_READY) {
         if (Climb_Distance <= Climb_Target_Distance - Harvest_Reclimb_Distance_Drop) {
             return RECLIMB;

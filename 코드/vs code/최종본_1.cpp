@@ -1,4 +1,4 @@
-﻿#include <Adafruit_VL53L0X.h>
+#include <Adafruit_VL53L0X.h>
 #include <Adafruit_PWMServoDriver.h>
 #include <Adafruit_Sensor.h>
 #include <Wire.h>
@@ -27,6 +27,7 @@ enum Signal {
 enum RobotState {
     Gripper_Open,
     Horizontal_Move,
+    Horizontal_Move_Reverse,
     Gripper_Close,
     Climb,
     Harvest
@@ -68,6 +69,9 @@ void Horizontal_Move_Enter();
 Signal Horizontal_Move_Update();
 void Stop_Horizontal_Motor();
 
+void Horizontal_Move_Reverse_Enter();
+Signal Horizontal_Move_Reverse_Update();
+
 void Gripper_Close_Enter();
 Signal Gripper_Close_Update();
 
@@ -83,7 +87,8 @@ void Stop_Motors();
 
 struct StateConfig stateConfigs[] = {
     { Gripper_Open, Gripper_Open_Enter, Gripper_Open_Update, Stop_Gripper_Motor },
-    // { Horizontal_Move, Horizontal_Move_Enter, Horizontal_Move_Update, Stop_Horizontal_Motor },
+    { Horizontal_Move, Horizontal_Move_Enter, Horizontal_Move_Update, Stop_Horizontal_Motor },
+    {Horizontal_Move_Reverse, Horizontal_Move_Reverse_Enter, Horizontal_Move_Reverse_Update, Stop_Horizontal_Motor},
     { Gripper_Close, Gripper_Close_Enter, Gripper_Close_Update, Stop_Gripper_Motor },
     // { Climb, Climb_Enter, Climb_Update, Stop_Climbing },
     // { Harvest, Harvest_Enter, Harvest_Update, Stop_Harvest_Climb_Motor }
@@ -99,8 +104,8 @@ const unsigned long StartTime = 2000;
 const int Climb_State_Index = 3;
 
 // HM0557 stepper motor
-const int STR = 8;
-const int DIR = 7;
+const int STR = 7;
+const int DIR = 8;
 
 // BTS7960 motor driver
 const int R_PWM[] = { 3, 6, 10 };
@@ -115,24 +120,20 @@ const int Servo_CH[] = { 4, 5, 6, 7};
 const int Servo_Num = 4;
 
 // Gripper open/close
-const int Steps_Per_Revolution_Open = 14400;
-const int Steps_Per_Revolution_Close = 30000;
-const int Step_Delay_Open = 200;
-const int Step_Delay_Close = 200;
-int gripperStep = 0;
+const unsigned long Steps_Per_Revolution_Open = 14400;
+const unsigned long Steps_Per_Revolution_Close = 40000;
+const int Step_Delay_Open = 100;
+const int Step_Delay_Close = 10;
+unsigned long gripperStep = 0;
 
 // Horizontal movement
 const int Motor_Horizontal = 2;
-const int Move_Horizontal_Start_Speed = 50;
-const int Move_Horizontal_Speed_Increment = 5;
-const int Move_Horizontal_Intermediary_Speed = 180;
-const unsigned long Move_Horizontal_Acceleration_Interval = 200;
-const unsigned long Move_Horizontal_Deceleration_Interval = 200;
-const unsigned long Move_Horizontal_Duration = 3000;
-const unsigned long Move_Horizontal_Deceleration_Duration = 4000;
-int Move_Horizontal_Speed = 0;
+const int Move_Horizontal_Speed = 180;
+const int Move_Horizontal_Reverse_Speed = 100;
+const unsigned long Move_Horizontal_Duration = 30000;
+const unsigned long Move_Horizontal_Reverse_Interval = 1000;
 unsigned long Move_Horizontal_Time;
-unsigned long Move_Horizontal_Change_Speed_Time;
+unsigned long Move_Horizontal_Reverse_Time;
 
 // Vertical movement
 
@@ -146,12 +147,14 @@ const int Climb_Max_Speed = 255;
 const unsigned long Climb_Decel_Interval = 200;
 
 const int Climb_Grip_Step_Increment = 500;
+const int Climb_Distance_Tolerance = 5;
 const unsigned long Climb_Accel_Interval = 200;
 const unsigned long Climb_Distance_Decrease_Duration = 2000;
 const unsigned long Climb_Same_Position_Duration = 3000;
 const unsigned long Grip_Tighten_Duration = 1000;
 const unsigned long Re_Accel_Duration = 2000;
-const int Climb_Distance_Tolerance = 5;
+
+const int Climb_Step_Speed = 500;
 unsigned long Climb_Accel_Time;
 unsigned long Climb_Decel_Time;
 unsigned long Climb_Stall_Start_Time;
@@ -203,7 +206,8 @@ unsigned long Distance_Sum = 0;
 bool Sensor_Enabled = false;
 
 void Move_Horizontal();
-void Stop_Moving_Horizontal();
+void Move_Horizontal_Reverse();
+
 void Constant_Climbing();
 void Decelerate_Climbing();
 void Set_Climb_Motors(int speed);
@@ -349,11 +353,15 @@ void loop() {
 
 void Gripper_Open_Enter() {
     gripperStep = 0;
-    digitalWrite(DIR, HIGH);
+    digitalWrite(DIR, LOW);
 }
 
 Signal Gripper_Open_Update() {
-    if (gripperStep < Steps_Per_Revolution_Open) {
+    unsigned long Gripper_Open_Target_Step;
+
+    Calculate_Motor_Step (Gripper_Open_Target_Step);
+
+    if (gripperStep < Gripper_Open_Target_Step){
         digitalWrite(STR, HIGH);
         delayMicroseconds(Step_Delay_Open);
         digitalWrite(STR, LOW);
@@ -373,60 +381,40 @@ void Stop_Gripper_Motor() {
 
 void Horizontal_Move_Enter() {
     Move_Horizontal_Time = millis();
-    Move_Horizontal_Change_Speed_Time = millis();
-    Move_Horizontal_Speed = 0;
+    Move_Horizontal();
 }
 
 Signal Horizontal_Move_Update() {
     unsigned long elapsedTime = millis() - Move_Horizontal_Time;
 
     if (elapsedTime <= Move_Horizontal_Duration) {
-        Move_Horizontal();
-        return KEEP;
-    }
-
-    if (elapsedTime <= Move_Horizontal_Duration + Move_Horizontal_Deceleration_Duration) {
-        Stop_Moving_Horizontal();
-
-        if (Move_Horizontal_Speed == 0) {
-            return NEXT;
-        }
-
         return KEEP;
     }
     return NEXT;
 }
 
 void Move_Horizontal() {
-    if (millis() - Move_Horizontal_Change_Speed_Time >= Move_Horizontal_Acceleration_Interval) {
-        Move_Horizontal_Change_Speed_Time = millis();
-
-        if (Move_Horizontal_Speed == 0) {
-            Move_Horizontal_Speed = Move_Horizontal_Start_Speed;
-        } else {
-            Move_Horizontal_Speed = min(
-                Move_Horizontal_Speed + Move_Horizontal_Speed_Increment,
-                Move_Horizontal_Intermediary_Speed
-            );
-        }
-    }
-
     currentSpeed[Motor_Horizontal] = Move_Horizontal_Speed;
-    analogWrite(R_PWM[Motor_Horizontal], Move_Horizontal_Speed);
+    analogWrite(R_PWM[Motor_Horizontal], currentSpeed[Motor_Horizontal]);
     analogWrite(L_PWM[Motor_Horizontal], 0);
 }
 
-void Stop_Moving_Horizontal() {
-    if (millis() - Move_Horizontal_Change_Speed_Time >= Move_Horizontal_Deceleration_Interval) {
-        Move_Horizontal_Change_Speed_Time = millis();
-        Move_Horizontal_Speed = max(0, Move_Horizontal_Speed - Move_Horizontal_Speed_Increment);
+void Horizontal_Move_Reverse_Enter() {
+    Move_Horizontal_Reverse_Time = millis();
+}
 
-        if (Move_Horizontal_Speed == 0) {
-            Stop_Horizontal_Motor();
-        }
+Signal Horizontal_Move_Reverse_Update() {
+    unsigned long elapsedTime = millis() - Move_Horizontal_Reverse_Time;
+
+    if (elapsedTime <= Move_Horizontal_Reverse_Interval) {
+        return KEEP;
     }
-    currentSpeed[Motor_Horizontal] = Move_Horizontal_Speed;
-    analogWrite(R_PWM[Motor_Horizontal], Move_Horizontal_Speed);
+    return NEXT;
+}
+
+void Move_Horizontal_Reverse() {
+    currentSpeed[Motor_Horizontal] = Move_Horizontal_Reverse_Speed;
+    analogWrite(R_PWM[Motor_Horizontal], currentSpeed[Motor_Horizontal]);
     analogWrite(L_PWM[Motor_Horizontal], 0);
 }
 
@@ -437,13 +425,18 @@ void Stop_Horizontal_Motor() {
     currentSpeed[Motor_Horizontal] = 0;
 }
 
+
 void Gripper_Close_Enter() {
     gripperStep = 0;
-    digitalWrite(DIR, LOW);
+    digitalWrite(DIR, HIGH);
 }
 
 Signal Gripper_Close_Update() {
-    if (gripperStep < Steps_Per_Revolution_Close) {
+    unsigned long Gripper_Close_Target_Step;
+
+    Calculate_Motor_Step (Gripper_Close_Target_Step);
+
+    if (gripperStep < Gripper_Close_Target_Step) {
         digitalWrite(STR, HIGH);
         delayMicroseconds(Step_Delay_Close);
         digitalWrite(STR, LOW);
@@ -455,6 +448,17 @@ Signal Gripper_Close_Update() {
     return KEEP;
 }
 
+void Calculate_Motor_Step (unsigned long &Step) {
+    RobotState currentState = stateConfigs[currentState_Index].state;
+
+    if (currentState==Gripper_Open) {
+        Step = Steps_Per_Revolution_Open;
+    } else if (currentState==Gripper_Close) {
+        Step = Steps_Per_Revolution_Close;
+    } else if (currentState==Climb) {
+        Step = Climb_Step_Speed;
+    }
+}
 void Climb_Enter() {
     Scan_Fail_Count = 0;
     Climb_Speed = Climb_Start_Speed;
@@ -471,6 +475,7 @@ Signal Climb_Update() {
     return KEEP;
     }
 
+    
     Scan_Distance_State Distance_Result = Read_Averaged_Distance(Climb_Distance);
 
     if (Distance_Result == DISTANCE_WAITING) {
