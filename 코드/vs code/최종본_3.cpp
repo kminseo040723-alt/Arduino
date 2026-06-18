@@ -128,12 +128,22 @@ unsigned long gripperStep = 0;
 
 // Horizontal movement
 const int Motor_Horizontal = 2;
-const int Move_Horizontal_Speed = 180;
-const int Move_Horizontal_Reverse_Speed = 100;
-const unsigned long Move_Horizontal_Duration = 10000;
-const unsigned long Move_Horizontal_Reverse_Interval = 1000;
+const int Move_Horizontal_Start_Speed = 50;
+const int Move_Horizontal_Speed_Increment = 5;
+const int Move_Horizontal_Intermediary_Speed = 180;
+const unsigned long Move_Horizontal_Acceleration_Interval = 200;
+const unsigned long Move_Horizontal_Deceleration_Interval = 200;
+const unsigned long Move_Horizontal_Duration = 3000;
+const unsigned long Move_Horizontal_Deceleration_Duration = 4000;
+int Move_Horizontal_Speed;
 unsigned long Move_Horizontal_Time;
-unsigned long Move_Horizontal_Reverse_Time;
+unsigned long Move_Horizontal_Change_Speed_Time;
+
+// Reverse Horizontal Movement
+const int Move_Horizontal_Reverse_Interval = 50;
+const int Move_Horizontal_Reverse_Speed = 50;
+
+unsigned long  Move_Horizontal_Reverse_Time;
 
 // Vertical movement
 
@@ -206,6 +216,7 @@ unsigned long Distance_Sum = 0;
 bool Sensor_Enabled = false;
 
 void Move_Horizontal();
+void Stop_Moving_Horizontal();
 void Move_Horizontal_Reverse();
 
 void Constant_Climbing();
@@ -381,21 +392,64 @@ void Stop_Gripper_Motor() {
 
 void Horizontal_Move_Enter() {
     Move_Horizontal_Time = millis();
-    Move_Horizontal();
+    Move_Horizontal_Change_Speed_Time = millis();
+    Move_Horizontal_Speed = 0;
 }
 
 Signal Horizontal_Move_Update() {
     unsigned long elapsedTime = millis() - Move_Horizontal_Time;
 
     if (elapsedTime <= Move_Horizontal_Duration) {
+        Move_Horizontal();
         return KEEP;
     }
+
+    if (elapsedTime <= Move_Horizontal_Duration + Move_Horizontal_Deceleration_Duration) {
+        Stop_Moving_Horizontal();
+
+        if (Move_Horizontal_Speed == 0) {
+            return NEXT;
+        }
+
+        return KEEP;
+    }
+
+    Stop_Horizontal_Motor();
+    Move_Horizontal_Speed = 0;
     return NEXT;
 }
 
 void Move_Horizontal() {
+    if (millis() - Move_Horizontal_Change_Speed_Time >= Move_Horizontal_Acceleration_Interval) {
+        Move_Horizontal_Change_Speed_Time = millis();
+
+        if (Move_Horizontal_Speed == 0) {
+            Move_Horizontal_Speed = Move_Horizontal_Start_Speed;
+        } else {
+            Move_Horizontal_Speed = min(
+                Move_Horizontal_Speed + Move_Horizontal_Speed_Increment,
+                Move_Horizontal_Intermediary_Speed
+            );
+        }
+    }
+
     currentSpeed[Motor_Horizontal] = Move_Horizontal_Speed;
-    analogWrite(R_PWM[Motor_Horizontal], currentSpeed[Motor_Horizontal]);
+    analogWrite(R_PWM[Motor_Horizontal], Move_Horizontal_Speed);
+    analogWrite(L_PWM[Motor_Horizontal], 0);
+}
+
+void Stop_Moving_Horizontal() {
+    if (millis() - Move_Horizontal_Change_Speed_Time >= Move_Horizontal_Deceleration_Interval) {
+        Move_Horizontal_Change_Speed_Time = millis();
+
+        Move_Horizontal_Speed = max(0, Move_Horizontal_Speed - Move_Horizontal_Speed_Increment);
+
+        if (Move_Horizontal_Speed == 0) {
+            Stop_Horizontal_Motor();
+        }
+    }
+    currentSpeed[Motor_Horizontal] = Move_Horizontal_Speed;
+    analogWrite(R_PWM[Motor_Horizontal], Move_Horizontal_Speed);
     analogWrite(L_PWM[Motor_Horizontal], 0);
 }
 
@@ -422,12 +476,6 @@ void Move_Horizontal_Reverse() {
 void Stop_Horizontal_Motor() {
     analogWrite(R_PWM[Motor_Horizontal], 0);
     analogWrite(L_PWM[Motor_Horizontal], 0);
-
-    currentSpeed[Motor_Horizontal] = 0;
-       for (int i = 0; i < Climb_Motor_Num; i++) {
-        analogWrite(R_PWM[i], 0);
-        analogWrite(L_PWM[i], 0);
-    }
 }
 
 

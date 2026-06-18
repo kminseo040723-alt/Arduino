@@ -88,12 +88,12 @@ void Stop_Harvest_Climb_Motor();
 void Stop_Motors();
 
 struct StateConfig stateConfigs[] = {
-    { Gripper_Open, Gripper_Open_Enter, Gripper_Open_Update, Stop_Gripper_Motor },
+    // { Gripper_Open, Gripper_Open_Enter, Gripper_Open_Update, Stop_Gripper_Motor },
     { Horizontal_Move, Horizontal_Move_Enter, Horizontal_Move_Update, Stop_Horizontal_Motor },
     {Horizontal_Move_Reverse, Horizontal_Move_Reverse_Enter, Horizontal_Move_Reverse_Update, Stop_Horizontal_Motor},
-    { Gripper_Close, Gripper_Close_Enter, Gripper_Close_Update, Stop_Gripper_Motor },
-    { Climb, Climb_Enter, Climb_Update, Stop_Climbing },
-    { Harvest, Harvest_Enter, Harvest_Update, Stop_Harvest_Climb_Motor }
+    // { Gripper_Close, Gripper_Close_Enter, Gripper_Close_Update, Stop_Gripper_Motor },
+    // { Climb, Climb_Enter, Climb_Update, Stop_Climbing },
+    // { Harvest, Harvest_Enter, Harvest_Update, Stop_Harvest_Climb_Motor }
 };
 
 int System_Fail_Count = 0;
@@ -130,20 +130,14 @@ unsigned long gripperStep = 0;
 
 // Horizontal movement
 const int Motor_Horizontal = 2;
-const int Move_Horizontal_Start_Speed = 150;
-const int Move_Horizontal_Speed_Increment = 10;
-const int Move_Horizontal_Intermediary_Speed = 220;
-const unsigned long Move_Horizontal_Acceleration_Interval = 200;
-const unsigned long Move_Horizontal_Deceleration_Interval = 200;
-const unsigned long Move_Horizontal_Duration = 8000;
-const unsigned long Move_Horizontal_Deceleration_Duration = 4000;
-int Move_Horizontal_Speed;
+const int Move_Horizontal_Speed = 250;
+const unsigned long Move_Horizontal_Duration = 15000;
+const unsigned long Move_Horizontal_Reverse_Interval = 1000;
 unsigned long Move_Horizontal_Time;
-unsigned long Move_Horizontal_Change_Speed_Time;
 
 // Reverse Horizontal Movement
 const int Move_Horizontal_Reverse_Duration = 1000;
-const int Move_Horizontal_Reverse_Speed = 50;
+const int Move_Horizontal_Reverse_Speed = 100;
 
 unsigned long  Move_Horizontal_Reverse_Time;
 
@@ -396,76 +390,32 @@ void Stop_Gripper_Motor() {
 
 void Horizontal_Move_Enter() {
     Move_Horizontal_Time = millis();
-    Move_Horizontal_Change_Speed_Time = millis();
-    Move_Horizontal_Speed = 0;
+    Move_Horizontal();
 }
 
 Signal Horizontal_Move_Update() {
     unsigned long elapsedTime = millis() - Move_Horizontal_Time;
 
     if (elapsedTime <= Move_Horizontal_Duration) {
-        Move_Horizontal();
         return KEEP;
     }
-
-    if (elapsedTime <= Move_Horizontal_Duration + Move_Horizontal_Deceleration_Duration) {
-        Stop_Moving_Horizontal();
-
-        if (Move_Horizontal_Speed == 0) {
-            return NEXT;
-        }
-
-        return KEEP;
-    }
-
-    Stop_Horizontal_Motor();
-    Move_Horizontal_Speed = 0;
     return NEXT;
 }
 
 void Move_Horizontal() {
-    if (millis() - Move_Horizontal_Change_Speed_Time >= Move_Horizontal_Acceleration_Interval) {
-        Move_Horizontal_Change_Speed_Time = millis();
-
-        if (Move_Horizontal_Speed == 0) {
-            Move_Horizontal_Speed = Move_Horizontal_Start_Speed;
-        } else {
-            Move_Horizontal_Speed = min(
-                Move_Horizontal_Speed + Move_Horizontal_Speed_Increment,
-                Move_Horizontal_Intermediary_Speed
-            );
-        }
-    }
-
     currentSpeed[Motor_Horizontal] = Move_Horizontal_Speed;
-    analogWrite(R_PWM[Motor_Horizontal], Move_Horizontal_Speed);
-    analogWrite(L_PWM[Motor_Horizontal], 0);
-}
-
-void Stop_Moving_Horizontal() {
-    if (millis() - Move_Horizontal_Change_Speed_Time >= Move_Horizontal_Deceleration_Interval) {
-        Move_Horizontal_Change_Speed_Time = millis();
-
-        Move_Horizontal_Speed = max(Move_Horizontal_Start_Speed , Move_Horizontal_Speed - Move_Horizontal_Speed_Increment);
-
-        if (Move_Horizontal_Speed == 0) {
-            Stop_Horizontal_Motor();
-        }
-    }
-    currentSpeed[Motor_Horizontal] = Move_Horizontal_Speed;
-    analogWrite(R_PWM[Motor_Horizontal], Move_Horizontal_Speed);
+    analogWrite(R_PWM[Motor_Horizontal], currentSpeed[Motor_Horizontal]);
     analogWrite(L_PWM[Motor_Horizontal], 0);
 }
 
 void Horizontal_Move_Reverse_Enter() {
     Move_Horizontal_Reverse_Time = millis();
-    Move_Horizontal_Reverse();
 }
 
 Signal Horizontal_Move_Reverse_Update() {
     unsigned long elapsedTime = millis() - Move_Horizontal_Reverse_Time;
 
-    if (elapsedTime <= Move_Horizontal_Reverse_Duration) {
+    if (elapsedTime <= Move_Horizontal_Reverse_Interval) {
         return KEEP;
     }
     return NEXT;
@@ -473,15 +423,16 @@ Signal Horizontal_Move_Reverse_Update() {
 
 void Move_Horizontal_Reverse() {
     currentSpeed[Motor_Horizontal] = Move_Horizontal_Reverse_Speed;
-    analogWrite(R_PWM[Motor_Horizontal], 0);
-    analogWrite(L_PWM[Motor_Horizontal], currentSpeed[Motor_Horizontal]);
+    analogWrite(R_PWM[Motor_Horizontal], currentSpeed[Motor_Horizontal]);
+    analogWrite(L_PWM[Motor_Horizontal], 0);
 }
 
 void Stop_Horizontal_Motor() {
     analogWrite(R_PWM[Motor_Horizontal], 0);
     analogWrite(L_PWM[Motor_Horizontal], 0);
-}
 
+    currentSpeed[Motor_Horizontal] = 0;
+}
 
 void Gripper_Close_Enter() {
     gripperStep = 0;
